@@ -96,6 +96,18 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(header("Record"))
         menu.addItem(entry("Record Area or Window…", "record.circle", keys[.record]) { Actions.recordArea() })
         menu.addItem(entry("Record Full Screen", "rectangle.inset.filled.badge.record", nil) { Actions.recordScreen() })
+        let sys = entry("System Audio", "speaker.wave.2", nil) { Preferences.shared.stored.systemAudio.toggle() }
+        sys.state = Preferences.shared.stored.systemAudio ? .on : .off
+        sys.indentationLevel = 1
+        menu.addItem(sys)
+        let mic = entry("Microphone", "mic", nil) { Preferences.shared.stored.microphone.toggle() }
+        mic.state = Preferences.shared.stored.microphone ? .on : .off
+        mic.indentationLevel = 1
+        menu.addItem(mic)
+        let cam = entry("Camera", "video", nil) { Preferences.shared.stored.camera.toggle() }
+        cam.state = Preferences.shared.stored.camera ? .on : .off
+        cam.indentationLevel = 1
+        menu.addItem(cam)
         menu.addItem(.separator())
 
         let beautify = entry("Beautify Screenshots", "sparkles", nil) {
@@ -128,6 +140,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             NSWorkspace.shared.open(Preferences.shared.screenshotFolderURL)
         })
         menu.addItem(.separator())
+        menu.addItem(entry("Welcome Tour…", "hand.wave", nil) { OnboardingWindowController.show() })
         let settings = entry("Settings…", "gearshape", nil) { SettingsWindowController.show() }
         settings.keyEquivalent = ","
         menu.addItem(settings)

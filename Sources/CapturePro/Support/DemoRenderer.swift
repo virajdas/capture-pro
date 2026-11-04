@@ -100,7 +100,11 @@ enum DemoRenderer {
         vi.markAsFinished()
         await writer.finishWriting()
 
+        try await writeFakeCamera(to: projectURL.appendingPathComponent("camera.mov"), duration: duration)
+
         var info = RecordingInfo()
+        info.hasCamera = true
+        info.cameraOffset = 0.2
         info.duration = duration
         info.pointWidth = points.width; info.pointHeight = points.height
         info.pixelWidth = size.width; info.pixelHeight = size.height
@@ -111,6 +115,8 @@ enum DemoRenderer {
         project.edit.segments = project.effectiveSegments()
         project.save()
         print("Zoom segments:", project.edit.segments.map { String(format: "%.2f–%.2f @%.1fx", $0.start, $0.end, $0.scale) })
+
+        try await benchmark(project)
 
         let out = folder.appendingPathComponent("demo.mp4")
         let start = Date()
@@ -129,6 +135,28 @@ enum DemoRenderer {
             }
         }
 
+        // Chroma-keyed cutout of the green-screen camera.
+        project.edit.camera.chromaKey = true
+        project.edit.camera.shape = .cutout
+        project.edit.camera.size = 0.45
+        let keyedGen = AVAssetImageGenerator(asset: AVURLAsset(url: project.cameraURL))
+        if let (camFrame, _) = try? await keyedGen.image(at: CMTime(seconds: 1, preferredTimescale: 600)),
+           let detected = ChromaKey.detect(in: CIImage(cgImage: camFrame)) {
+            print("Detected key colour:", detected.hex)
+            project.edit.camera.keyColor = detected
+        }
+        let keyedOut = folder.appendingPathComponent("keyed.mp4")
+        project.edit.export.format = .mp4
+        try await Exporter().export(project: project, to: keyedOut) { _ in }
+        let kg = AVAssetImageGenerator(asset: AVURLAsset(url: keyedOut))
+        kg.requestedTimeToleranceBefore = .zero; kg.requestedTimeToleranceAfter = .zero
+        let (keyed, _) = try await kg.image(at: CMTime(seconds: 0.5, preferredTimescale: 600))
+        if let d = CGImageDestinationCreateWithURL(folder.appendingPathComponent("keyed.png") as CFURL, "public.png" as CFString, 1, nil) {
+            CGImageDestinationAddImage(d, keyed, nil)
+            CGImageDestinationFinalize(d)
+        }
+        project.edit.camera = CameraStyle()
+
         project.edit.export.format = .gif
         try await Exporter().export(project: project, to: folder.appendingPathComponent("demo.gif")) { _ in }
 
@@ -141,6 +169,96 @@ enum DemoRenderer {
                 CGImageDestinationFinalize(d)
             }
         }
+    }
+
+    /// Times the live-preview render path (900p, as the editor uses) to catch performance regressions.
+    private static func benchmark(_ project: RecordingProject) async throws {
+        let src = CGSize(width: project.info.pixelWidth, height: project.info.pixelHeight)
+        let style = project.edit.style
+        let canvas = RenderState.canvasSize(source: src, style: style, shortSide: 900)
+        let timeline = MotionTimeline(input: project.input, duration: project.info.duration,
+                                      segments: project.effectiveSegments(), style: style, aspect: src.width / src.height)
+        let comp = Compositor(state: RenderState(style: style, canvas: canvas, pointSize: CGSize(width: 1440, height: 900),
+                                                 timeline: timeline, cursors: [:], timeOffset: 0, preview: true,
+                                                 camera: project.edit.camera))
+        let frameGen = AVAssetImageGenerator(asset: AVURLAsset(url: project.videoURL))
+        let (frame, _) = try await frameGen.image(at: CMTime(seconds: 2, preferredTimescale: 600))
+        let camGen = AVAssetImageGenerator(asset: AVURLAsset(url: project.cameraURL))
+        let (cam, _) = try await camGen.image(at: CMTime(seconds: 1, preferredTimescale: 600))
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(nil, Int(canvas.width), Int(canvas.height), kCVPixelFormatType_32BGRA,
+                            [kCVPixelBufferMetalCompatibilityKey: true, kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pb)
+        guard let pb else { return }
+        // Use GPU-resident (IOSurface) frames, as AVFoundation hands the compositor during playback.
+        func surface(_ img: CGImage) -> CIImage {
+            var buf: CVPixelBuffer?
+            CVPixelBufferCreate(nil, img.width, img.height, kCVPixelFormatType_32BGRA,
+                                [kCVPixelBufferMetalCompatibilityKey: true, kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buf)
+            CaptureVideoCompositor.context.render(CIImage(cgImage: img), to: buf!)
+            return CIImage(cvPixelBuffer: buf!)
+        }
+        let source = surface(frame), camera = surface(cam)
+        func time(_ label: String, _ body: (Int) -> CIImage) {
+            let n = 120
+            for i in 0..<5 { CaptureVideoCompositor.context.render(body(i), to: pb, bounds: CGRect(origin: .zero, size: canvas), colorSpace: CGColorSpace(name: CGColorSpace.sRGB)) }
+            let t0 = Date()
+            for i in 0..<n {
+                CaptureVideoCompositor.context.render(body(i), to: pb, bounds: CGRect(origin: .zero, size: canvas),
+                                                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            }
+            let ms = Date().timeIntervalSince(t0) / Double(n) * 1000
+            print(String(format: "  %@: %.2f ms/frame", label, ms))
+        }
+        print(String(format: "Preview render at %.0f×%.0f (budget 16.7 ms):", canvas.width, canvas.height))
+        time("full frame + camera") { comp.render(source: source, camera: camera, time: Double($0) / 60) }
+        time("full frame") { comp.render(source: source, time: Double($0) / 60) }
+        time("background only") { comp.background.image(style: style.background, size: canvas, time: Double($0) / 60) }
+        time("source copy only") { _ in source.transformed(by: CGAffineTransform(scaleX: canvas.width / source.extent.width, y: canvas.height / source.extent.height)) }
+    }
+
+    /// A green-screen "presenter": a head and shoulders swaying in front of an unevenly lit backdrop.
+    private static func writeFakeCamera(to url: URL, duration: Double) async throws {
+        let size = CGSize(width: 1280, height: 720)
+        try? FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let vi = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: size.width, AVVideoHeightKey: size.height,
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: vi, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: size.width, kCVPixelBufferHeightKey as String: size.height,
+        ])
+        writer.add(vi)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        for f in 0...Int(duration * 30) {
+            while !vi.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            guard let pool = adaptor.pixelBufferPool else { break }
+            var pb: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pb)
+            guard let pb else { continue }
+            CVPixelBufferLockBaseAddress(pb, [])
+            if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb), width: 1280, height: 720, bitsPerComponent: 8,
+                                   bytesPerRow: CVPixelBufferGetBytesPerRow(pb), space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+                let grad = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [
+                    CGColor(srgbRed: 0.05, green: 0.62, blue: 0.22, alpha: 1),
+                    CGColor(srgbRed: 0.0, green: 0.74, blue: 0.28, alpha: 1),
+                    CGColor(srgbRed: 0.03, green: 0.55, blue: 0.2, alpha: 1)] as CFArray, locations: nil)!
+                ctx.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 1280, y: 720), options: [])
+                let sway = sin(Double(f) / 30 * 2) * 40
+                ctx.setFillColor(CGColor(srgbRed: 0.18, green: 0.2, blue: 0.3, alpha: 1))
+                ctx.fillEllipse(in: CGRect(x: 380 + sway, y: -260, width: 520, height: 520))
+                ctx.setFillColor(CGColor(srgbRed: 0.93, green: 0.74, blue: 0.62, alpha: 1))
+                ctx.fillEllipse(in: CGRect(x: 530 + sway, y: 230, width: 220, height: 270))
+                ctx.setFillColor(CGColor(srgbRed: 0.25, green: 0.16, blue: 0.1, alpha: 1))
+                ctx.fillEllipse(in: CGRect(x: 520 + sway, y: 400, width: 240, height: 130))
+            }
+            CVPixelBufferUnlockBaseAddress(pb, [])
+            adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: 30))
+        }
+        vi.markAsFinished()
+        await writer.finishWriting()
     }
 
     private static func interpolate(_ path: [(Double, Double, Double)], _ t: Double) -> (Double, Double) {

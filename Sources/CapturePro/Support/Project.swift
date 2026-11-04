@@ -46,11 +46,28 @@ struct ZoomSegment: Codable, Hashable, Identifiable {
     var start: Double
     var end: Double
     var scale: Double
+    /// Disabled segments stay on the timeline but don't zoom.
+    var enabled = true
     /// When nil the camera follows the cursor; otherwise it holds this normalized focus point.
     var focusX: Double? = nil
     var focusY: Double? = nil
 
     var duration: Double { end - start }
+
+    init(start: Double, end: Double, scale: Double, enabled: Bool = true) {
+        self.start = start; self.end = end; self.scale = scale; self.enabled = enabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        scale = try c.decode(Double.self, forKey: .scale)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        focusX = try c.decodeIfPresent(Double.self, forKey: .focusX)
+        focusY = try c.decodeIfPresent(Double.self, forKey: .focusY)
+    }
 }
 
 struct RecordingInfo: Codable {
@@ -68,6 +85,8 @@ struct RecordingInfo: Codable {
     /// Audio start relative to the first video frame.
     var systemAudioOffset: Double = 0
     var microphoneOffset: Double = 0
+    var hasCamera = false
+    var cameraOffset: Double = 0
 }
 
 struct EditState: Codable {
@@ -77,6 +96,9 @@ struct EditState: Codable {
     var segmentsEdited = false
     var trimStart: Double = 0
     var trimEnd: Double? = nil
+    var systemVolume: Double = 1
+    var microphoneVolume: Double = 1
+    var camera = CameraStyle()
 }
 
 /// A recording on disk: `Name.capturepro/` with `raw.mov`, `project.json` and `cursors/`.
@@ -89,6 +111,7 @@ final class RecordingProject {
     var videoURL: URL { url.appendingPathComponent("raw.mov") }
     var systemAudioURL: URL { url.appendingPathComponent("system.m4a") }
     var microphoneURL: URL { url.appendingPathComponent("mic.m4a") }
+    var cameraURL: URL { url.appendingPathComponent("camera.mov") }
     var cursorsURL: URL { url.appendingPathComponent("cursors", isDirectory: true) }
     var name: String { url.deletingPathExtension().lastPathComponent }
 
@@ -107,7 +130,11 @@ final class RecordingProject {
 
     static func load(_ url: URL) throws -> RecordingProject {
         let data = try Data(contentsOf: url.appendingPathComponent("project.json"))
-        let doc = try JSONDecoder().decode(Document.self, from: data)
+        let defaults = Document(info: RecordingInfo(), input: InputLog(),
+                                edit: EditState(style: StyleSettings(), export: ExportSettings()))
+        guard let doc = Resilient.decode(Document.self, from: data, defaults: defaults) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
         return RecordingProject(url: url, info: doc.info, input: doc.input, edit: doc.edit)
     }
 

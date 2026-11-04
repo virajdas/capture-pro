@@ -78,8 +78,14 @@ enum ScreenshotService {
         if prefs.copyScreenshots {
             copy(image, file: saved)
         }
-        if prefs.showPreview {
+        switch prefs.afterScreenshot {
+        case .editor:
+            // The editor has its own Beautify switch, so it always starts from the raw capture.
+            AnnotationEditor.open(image: raw, file: saved)
+        case .preview:
             ScreenshotPreview.show(image: image, file: saved)
+        case .nothing:
+            break
         }
     }
 

@@ -21,6 +21,18 @@ enum AfterRecording: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum AfterScreenshot: String, Codable, CaseIterable, Identifiable {
+    case editor, preview, nothing
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .editor: "Open the editor"
+        case .preview: "Show a floating preview"
+        case .nothing: "Nothing"
+        }
+    }
+}
+
 enum MenuClickAction: String, Codable, CaseIterable, Identifiable {
     case menu, area, record
     var id: String { rawValue }
@@ -58,6 +70,9 @@ final class Preferences {
     static let shared = Preferences()
 
     struct Stored: Codable {
+        /// Bumped when defaults change; older saves get the new defaults for those settings.
+        var schema = Stored.currentSchema
+        static let currentSchema = 2
         // General
         var menuClick: MenuClickAction = .menu
         var playSounds = true
@@ -69,8 +84,9 @@ final class Preferences {
         ]
         // Screenshots
         var screenshotFolder: String = Stored.defaultFolder(.picturesDirectory)
-        var saveScreenshots = true
+        var saveScreenshots = false
         var copyScreenshots = true
+        var afterScreenshot: AfterScreenshot = .editor
         var showPreview = true
         var previewSeconds: Double = 6
         var imageFormat: ImageFormat = .png
@@ -84,9 +100,13 @@ final class Preferences {
         var systemAudio = false
         var microphone = false
         var microphoneID: String? = nil
+        var camera = false
+        var cameraID: String? = nil
         var hideSystemCursor = true
         var afterRecording: AfterRecording = .editor
         var exportFolder: String = Stored.defaultFolder(.moviesDirectory)
+        var askWhereToExport = false
+        var revealAfterExport = true
         // Look
         var style = StyleSettings()
         var export = ExportSettings()
@@ -102,8 +122,14 @@ final class Preferences {
     }
 
     private init() {
-        if let data = UserDefaults.standard.data(forKey: "settings"),
-           let s = try? JSONDecoder().decode(Stored.self, from: data) {
+        if let data = UserDefaults.standard.data(forKey: "settings") {
+            let old = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["schema"] as? Int ?? 1
+            // Version 2 changed these defaults; reset them once for existing users.
+            let reset: [[String]] = old < 2
+                ? [["saveScreenshots"], ["copyScreenshots"], ["showPreview"], ["style", "zoom"]]
+                : []
+            var s = Resilient.decode(Stored.self, from: data, defaults: Stored(), dropping: reset) ?? Stored()
+            s.schema = Stored.currentSchema
             stored = s
         } else {
             stored = Stored()

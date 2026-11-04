@@ -134,19 +134,40 @@ struct EditorTimeline: View {
     private func segmentView(_ seg: ZoomSegment, x: @escaping (Double) -> Double, time: @escaping (Double) -> Double) -> some View {
         let selected = model.selectedSegment == seg.id
         let width = max(16, x(seg.end) - x(seg.start))
+        let on = seg.enabled
         return ZStack {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(LinearGradient(colors: [Color(red: 0.45, green: 0.55, blue: 1), Color(red: 0.62, green: 0.48, blue: 0.98)],
-                                     startPoint: .leading, endPoint: .trailing).opacity(selected ? 1 : 0.75))
+                .fill(on
+                      ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.45, green: 0.55, blue: 1), Color(red: 0.62, green: 0.48, blue: 0.98)],
+                                                     startPoint: .leading, endPoint: .trailing).opacity(selected ? 1 : 0.75))
+                      : AnyShapeStyle(Color.secondary.opacity(selected ? 0.3 : 0.18)))
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(.white.opacity(selected ? 0.9 : 0.25), lineWidth: selected ? 2 : 1)
-            Text(String(format: "%.1f×", seg.scale)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
-                .opacity(width > 40 ? 1 : 0)
+                .strokeBorder(on ? Color.white.opacity(selected ? 0.9 : 0.25) : Color.secondary.opacity(selected ? 0.9 : 0.5),
+                              style: StrokeStyle(lineWidth: selected ? 2 : 1, dash: on ? [] : [4, 3]))
+            HStack(spacing: 4) {
+                Button {
+                    model.updateSegment(seg.id) { $0.enabled.toggle() }
+                } label: {
+                    Image(systemName: on ? "eye" : "eye.slash")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 16, height: 16)
+                        .background(.black.opacity(0.18), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(on ? "Turn this zoom off" : "Turn this zoom on")
+                Text(on ? String(format: "%.1f×", seg.scale) : "Off").font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(on ? Color.white : Color.secondary)
+            .opacity(width > 64 ? 1 : 0)
             HStack {
                 edge(seg, leading: true, time: time)
                 Spacer(minLength: 0)
                 edge(seg, leading: false, time: time)
             }
+        }
+        .contextMenu {
+            Button(on ? "Turn Zoom Off" : "Turn Zoom On") { model.updateSegment(seg.id) { $0.enabled.toggle() } }
+            Button("Delete Zoom", role: .destructive) { model.deleteSegment(seg.id) }
         }
         .frame(width: width, height: 26)
         .offset(x: x(seg.start), y: 0)

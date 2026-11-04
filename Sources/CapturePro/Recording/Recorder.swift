@@ -35,6 +35,7 @@ struct RecordingOptions {
     var systemAudio = false
     var microphone = false
     var microphoneID: String? = nil
+    var camera: CameraRecorder? = nil
 }
 
 /// Lazily-created AAC writer for one audio stream, so we can adopt whatever format arrives.
@@ -96,6 +97,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastBuffer: CMSampleBuffer?
     private var pixelSize = CGSize.zero
     private var pointSize = CGSize.zero
+    private var captureFPS = 60
+    private var dropped = 0
 
     init(target: CaptureTarget, options: RecordingOptions, projectURL: URL) {
         self.target = target
@@ -133,11 +136,16 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
                            height: (pointSize.height * scale / 2).rounded() * 2)
         config.width = Int(pixelSize.width)
         config.height = Int(pixelSize.height)
-        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(options.fps))
+        let captureFPS = options.fps
+        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(captureFPS))
+        self.captureFPS = captureFPS
         config.showsCursor = !options.hideSystemCursor
-        config.pixelFormat = kCVPixelFormatType_32BGRA
+        // 4:2:0 is what the hardware encoder consumes natively: half the memory traffic of BGRA
+        // and no conversion pass, which keeps the rest of the Mac responsive while recording.
+        config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        config.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         config.colorSpaceName = CGColorSpace.sRGB
-        config.queueDepth = 8
+        config.queueDepth = 6
         config.captureResolution = .best
         if options.systemAudio {
             config.capturesAudio = true
@@ -152,14 +160,14 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let w = try AVAssetWriter(outputURL: projectURL.appendingPathComponent("raw.mov"), fileType: .mov)
         // HEVC: H.264 cannot encode 5K/6K retina frames. Generous bitrate keeps text crisp.
-        let bitrate = min(0.22 * pixelSize.width * pixelSize.height * Double(options.fps), 140_000_000)
+        let bitrate = min(0.2 * pixelSize.width * pixelSize.height * Double(captureFPS), 120_000_000)
         let vi = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: pixelSize.width,
             AVVideoHeightKey: pixelSize.height,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: bitrate,
-                AVVideoExpectedSourceFrameRateKey: options.fps,
+                AVVideoExpectedSourceFrameRateKey: captureFPS,
                 AVVideoMaxKeyFrameIntervalDurationKey: 2,
                 AVVideoAllowFrameReorderingKey: false,
             ],
@@ -179,6 +187,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
         stream = s
         tracker.start()
         try await s.startCapture()
+        options.camera?.startRecording()
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer buf: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -195,7 +204,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 writer.startSession(atSourceTime: pts)
                 tracker.setStart(pts.seconds)
             }
-            if videoInput.isReadyForMoreMediaData { videoInput.append(buf) }
+            if videoInput.isReadyForMoreMediaData { videoInput.append(buf) } else { dropped += 1 }
             lastBuffer = buf
         case .audio:
             guard firstPTS != nil else { return }
@@ -237,6 +246,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 cont.resume(returning: end)
             }
         }
+        if dropped > 0 { NSLog("Capture Pro: encoder skipped \(dropped) frames") }
         videoInput.markAsFinished()
         writer.endSession(atSourceTime: end)
         await writer.finishWriting()
@@ -262,6 +272,10 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
         if let m = micAudio, await m.finish(), let p = m.firstPTS {
             info.hasMicrophone = true
             info.microphoneOffset = p - first.seconds
+        }
+        if let cam = options.camera, await cam.stop(), let p = cam.firstHostTime {
+            info.hasCamera = true
+            info.cameraOffset = p - first.seconds
         }
 
         let cursors = projectURL.appendingPathComponent("cursors")

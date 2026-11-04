@@ -16,8 +16,7 @@ final class EditorWindowController: NSObject, NSWindowDelegate {
         }
         let c = EditorWindowController(project: project)
         open[project.url] = c
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        AppWindows.opened()
         c.window.makeKeyAndOrderFront(nil)
     }
 
@@ -41,15 +40,18 @@ final class EditorWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         model.tearDown()
         Self.open[model.project.url] = nil
-        if Self.open.isEmpty { NSApp.setActivationPolicy(.accessory) }
+        AppWindows.closed()
     }
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case background = "Background", frame = "Frame", cursor = "Cursor", camera = "Camera"
+    case looks = "Looks", background = "Background", frame = "Frame", cursor = "Cursor", camera = "Zoom", webcam = "Webcam", audio = "Audio"
     var id: String { rawValue }
     var symbol: String {
         switch self {
+        case .looks: "sparkles"
+        case .audio: "speaker.wave.2"
+        case .webcam: "person.crop.circle"
         case .background: "paintpalette"
         case .frame: "square.on.square"
         case .cursor: "cursorarrow.motionlines"
@@ -60,7 +62,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
 struct EditorView: View {
     @Bindable var model: EditorModel
-    @State private var tab: InspectorTab = .background
+    @State private var tab: InspectorTab = .looks
     @State private var showExport = false
 
     var body: some View {
@@ -69,6 +71,7 @@ struct EditorView: View {
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     PlayerSurface(player: model.player)
+                        .overlay { CameraDragOverlay(model: model) }
                         .padding(20)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     transport
@@ -92,6 +95,8 @@ struct EditorView: View {
             Menu {
                 Button("Save as Default Look") { model.saveAsDefaultLook() }
                 Button("Reset Zoom to Automatic") { model.regenerateSegments() }
+                Button("Turn All Zooms On") { model.setAllSegments(enabled: true) }
+                Button("Turn All Zooms Off") { model.setAllSegments(enabled: false) }
                 Divider()
                 Button("Show Project in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.project.url]) }
             } label: {
@@ -140,6 +145,12 @@ struct EditorView: View {
             .padding(12)
             Form {
                 switch tab {
+                case .looks:
+                    Section("Looks") { PresetGallery(style: $model.style) }
+                case .audio:
+                    AudioControls(model: model)
+                case .webcam:
+                    WebcamControls(model: model)
                 case .background:
                     Section("Background") { BackgroundControls(style: $model.style.background) }
                 case .frame:
@@ -149,6 +160,9 @@ struct EditorView: View {
                 case .camera:
                     if let id = model.selectedSegment, let seg = model.segments.first(where: { $0.id == id }) {
                         Section("Selected zoom") {
+                            Toggle("Zoom enabled", isOn: Binding(
+                                get: { seg.enabled },
+                                set: { v in model.updateSegment(id) { $0.enabled = v } }))
                             LabeledSlider("Zoom", value: Binding(
                                 get: { seg.scale },
                                 set: { v in model.updateSegment(id) { $0.scale = v } }), in: 1.1...4, format: "%.1f×")
@@ -172,9 +186,9 @@ struct EditorView: View {
                             Button("Remove This Zoom", role: .destructive) { model.deleteSegment(id) }
                         }
                     }
-                    Section("Camera") { ZoomControls(style: $model.style.zoom) }
+                    Section("Zoom") { ZoomControls(style: $model.style.zoom) }
                     Section {
-                        Text("Double-click the zoom track to add a zoom. Drag zooms to move them, or drag their edges to resize.")
+                        Text("Double-click the zoom track to add a zoom. Drag zooms to move them, drag their edges to resize, and use the eye to switch a zoom on or off.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -187,6 +201,43 @@ struct EditorView: View {
     private func format(_ t: Double) -> String {
         let s = max(0, t)
         return String(format: "%d:%02d.%d", Int(s) / 60, Int(s) % 60, Int(s * 10) % 10)
+    }
+}
+
+struct AudioControls: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let info = model.project.info
+        if !info.hasSystemAudio && !info.hasMicrophone {
+            Section("Audio") {
+                Text("This recording has no audio. System audio and microphone can be turned on for new recordings in the menu bar or Settings › Recording.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        } else {
+            Section("Audio") {
+                if info.hasSystemAudio {
+                    volume("System audio", symbol: "speaker.wave.2", value: $model.systemVolume)
+                }
+                if info.hasMicrophone {
+                    volume("Microphone", symbol: "mic", value: $model.microphoneVolume)
+                }
+            }
+        }
+    }
+
+    private func volume(_ title: String, symbol: String, value: Binding<Double>) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                value.wrappedValue = value.wrappedValue > 0 ? 0 : 1
+            } label: {
+                Image(systemName: value.wrappedValue > 0 ? symbol : symbol + ".slash")
+                    .frame(width: 20)
+            }
+            .buttonStyle(.plain)
+            .help(value.wrappedValue > 0 ? "Mute" : "Unmute")
+            LabeledSlider(title, value: value, in: 0...2, format: "%.0f%%", scale: 100)
+        }
     }
 }
 
@@ -224,6 +275,7 @@ struct PlayerSurface: NSViewRepresentable {
 
 struct ExportSheet: View {
     @Bindable var model: EditorModel
+    @Bindable var prefs = Preferences.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -251,16 +303,23 @@ struct ExportSheet: View {
                     Button("Done") { model.exportResult = nil; dismiss() }.keyboardShortcut(.defaultAction)
                 }
             } else {
-                Form { ExportControls(settings: $model.export) }
-                    .formStyle(.grouped)
-                    .frame(height: 230)
+                Form {
+                    ExportControls(settings: $model.export)
+                    Section {
+                        LabeledContent("Save to") { FolderPicker(path: $prefs.stored.exportFolder) }
+                        Toggle("Ask where to save each time", isOn: $prefs.stored.askWhereToExport)
+                    }
+                }
+                .formStyle(.grouped)
+                .frame(height: 330)
                 if let e = model.exportError {
                     Text(e).foregroundStyle(.red).font(.callout)
                 }
                 HStack {
                     Spacer()
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                    Button("Export…") { choose() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    Button(prefs.stored.askWhereToExport ? "Export…" : "Export") { choose() }
+                        .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -269,13 +328,28 @@ struct ExportSheet: View {
     }
 
     private func choose() {
-        let panel = NSSavePanel()
         let ext = model.export.format == .gif ? "gif" : model.export.format.rawValue
+        let folder = Preferences.shared.exportFolderURL
+        guard prefs.stored.askWhereToExport else {
+            model.startExport(to: Self.uniqueURL(in: folder, name: model.project.name, ext: ext))
+            return
+        }
+        let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .movie]
         panel.nameFieldStringValue = model.project.name + "." + ext
-        panel.directoryURL = Preferences.shared.exportFolderURL
+        panel.directoryURL = folder
         if panel.runModal() == .OK, let url = panel.url {
             model.startExport(to: url)
         }
+    }
+
+    static func uniqueURL(in folder: URL, name: String, ext: String) -> URL {
+        var url = folder.appendingPathComponent("\(name).\(ext)")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(name) \(n).\(ext)")
+            n += 1
+        }
+        return url
     }
 }

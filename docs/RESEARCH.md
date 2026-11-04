@@ -28,6 +28,15 @@ So every setting stays editable, and preview and export are identical.
 
 ## 3. Camera
 
+> Capture Pro 1.1 replaced the spring-driven zoom with eased transitions. Springs chasing
+> step targets felt snappy, and with zoom and pan on independent springs they swooped
+> sideways. Each zoom is now three phases. First, an eased zoom-in interpolated in log-scale
+> space about the one point that stays fixed between the start and end framings. Second, a
+> hold where a critically damped spring pans after the cursor. Third, an eased zoom-out.
+> The curves are cubic Béziers, and the default "Smooth" is `(0.42, 0, 0.18, 1)`, with
+> 0.9 s in and 1.1 s out. Camera motion blur is now off by default. The notes below
+> describe the spring approach, which still drives the pan.
+
 - **Spring setup:**
   - One spring each for zoom level, x and y.
   - Each spring chases a step target and keeps its velocity when the target changes, so nothing has a fixed duration.
@@ -59,7 +68,13 @@ So every setting stays editable, and preview and export are identical.
 - **Edge:** a 1 px light inner edge stops dark UIs from melting into dark backgrounds.
 - **Backgrounds:** a few adjacent hues drifting slowly (one cycle every 20–40 s), with a soft warp and **fine grain**. The grain hides gradient banding after compression. Cap's default animated palette ("Cool Candy") is ours too.
 
-## 6. Export
+## 6. Smoothness
+
+- **Frames:** capture at the display's refresh rate, up to 120 Hz. App animations then don't beat against a 60 Hz sampling grid, and export picks evenly spaced frames from the denser stream.
+- **Cursor:** positions come from real mouse events with their own timestamps. Polling a timer adds jitter that a spring can only partly hide.
+- **Live preview:** uses bilinear resampling. Export keeps the slower Lanczos resampling for crisp text.
+
+## 7. Export
 
 - **Frame rate:** 60 fps, as Screen Studio recommends.
 - **Bitrate:** bits per pixel × width × height × fps.

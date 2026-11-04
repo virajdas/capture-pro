@@ -10,6 +10,22 @@ enum CompositionBuilder {
         let asset: AVMutableComposition
         let video: AVMutableVideoComposition
         let duration: Double
+        let audioMix: AVMutableAudioMix?
+        /// Composition audio tracks, flagged true for the microphone.
+        let audioTracks: [(CMPersistentTrackID, Bool)]
+    }
+
+    /// Volume levels for the system-audio and microphone tracks.
+    static func audioMix(for asset: AVAsset, project: RecordingProject, tracks: [(CMPersistentTrackID, Bool)]) -> AVMutableAudioMix? {
+        guard !tracks.isEmpty else { return nil }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = tracks.map { id, isMic in
+            let p = AVMutableAudioMixInputParameters()
+            p.trackID = id
+            p.setVolume(Float(isMic ? project.edit.microphoneVolume : project.edit.systemVolume), at: .zero)
+            return p
+        }
+        return mix
     }
 
     static func build(project: RecordingProject, compositor: Compositor, fps: Int) async throws -> Result {
@@ -25,10 +41,11 @@ enum CompositionBuilder {
         try video.insertTimeRange(range, of: srcVideo, at: .zero)
 
         // Audio lives in separate files that may start slightly after the first frame.
-        var audioFiles: [(URL, Double)] = []
-        if project.info.hasSystemAudio { audioFiles.append((project.systemAudioURL, project.info.systemAudioOffset)) }
-        if project.info.hasMicrophone { audioFiles.append((project.microphoneURL, project.info.microphoneOffset)) }
-        for (url, offset) in audioFiles {
+        var audioFiles: [(URL, Double, Bool)] = []
+        if project.info.hasSystemAudio { audioFiles.append((project.systemAudioURL, project.info.systemAudioOffset, false)) }
+        if project.info.hasMicrophone { audioFiles.append((project.microphoneURL, project.info.microphoneOffset, true)) }
+        var audioTracks: [(CMPersistentTrackID, Bool)] = []
+        for (url, offset, isMic) in audioFiles {
             let a = AVURLAsset(url: url)
             guard let track = try? await a.loadTracks(withMediaType: .audio).first,
                   let dur = try? await a.load(.duration).seconds,
@@ -43,16 +60,37 @@ enum CompositionBuilder {
                 CMTimeRange(start: CMTime(seconds: aStart, preferredTimescale: 48000),
                             end: CMTime(seconds: aEnd, preferredTimescale: 48000)),
                 of: track, at: CMTime(seconds: at, preferredTimescale: 48000))
+            audioTracks.append((dst.trackID, isMic))
         }
 
-        let compositor = compositor
-        let videoComp = try await AVMutableVideoComposition.videoComposition(with: comp) { request in
-            let img = compositor.render(source: request.sourceImage, time: request.compositionTime.seconds)
-            request.finish(with: img, context: nil)
+        // Camera (optional) is another video track, offset like the audio.
+        var cameraTrack: CMPersistentTrackID?
+        if project.info.hasCamera {
+            let a = AVURLAsset(url: project.cameraURL)
+            if let track = try? await a.loadTracks(withMediaType: .video).first,
+               let dur = try? await a.load(.duration).seconds,
+               let dst = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                let offset = project.info.cameraOffset
+                let cStart = max(0, start - offset), cEnd = min(dur, end - offset)
+                if cEnd > cStart {
+                    try? dst.insertTimeRange(
+                        CMTimeRange(start: CMTime(seconds: cStart, preferredTimescale: 600),
+                                    end: CMTime(seconds: cEnd, preferredTimescale: 600)),
+                        of: track, at: CMTime(seconds: max(0, offset - start), preferredTimescale: 600))
+                    cameraTrack = dst.trackID
+                }
+            }
         }
+
+        let videoComp = AVMutableVideoComposition()
+        videoComp.customVideoCompositorClass = CaptureVideoCompositor.self
+        videoComp.instructions = [CaptureInstruction(
+            timeRange: CMTimeRange(start: .zero, duration: comp.duration),
+            screenTrack: video.trackID, cameraTrack: cameraTrack, compositor: compositor)]
         videoComp.renderSize = compositor.state.canvas
         videoComp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
-        return Result(asset: comp, video: videoComp, duration: end - start)
+        return Result(asset: comp, video: videoComp, duration: end - start,
+                      audioMix: audioMix(for: comp, project: project, tracks: audioTracks), audioTracks: audioTracks)
     }
 }
 
@@ -85,7 +123,7 @@ final class Exporter {
         let state = RenderState(style: style, canvas: canvas,
                                 pointSize: CGSize(width: project.info.pointWidth, height: project.info.pointHeight),
                                 timeline: timeline, cursors: project.cursorImages(),
-                                timeOffset: project.edit.trimStart)
+                                timeOffset: project.edit.trimStart, camera: project.edit.camera)
         let compositor = Compositor(state: state)
         let fps = gif ? ex.gifFPS : ex.fps
         let built = try await CompositionBuilder.build(project: project, compositor: compositor, fps: fps)
@@ -119,6 +157,7 @@ final class Exporter {
                 AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false,
                 AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
             ])
+            o.audioMix = b.audioMix
             reader.add(o)
             aOut = o
         }

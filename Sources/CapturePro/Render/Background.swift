@@ -29,7 +29,23 @@ final class BackgroundRenderer {
     }
     """)
 
+    private var staticCache: (BackgroundStyle, CGSize, CIImage)?
+
     func image(style: BackgroundStyle, size: CGSize, time: Double) -> CIImage {
+        let isStatic = !style.animated || style.kind == .solid || style.kind == .wallpaper || style.kind == .image
+        if isStatic {
+            lock.lock()
+            if let c = staticCache, c.0 == style, c.1 == size { lock.unlock(); return c.2 }
+            lock.unlock()
+            var img = compose(style: style, size: size, time: 0)
+            if let cg = CaptureVideoCompositor.context.createCGImage(img, from: img.extent) { img = CIImage(cgImage: cg) }
+            lock.lock(); staticCache = (style, size, img); lock.unlock()
+            return img
+        }
+        return compose(style: style, size: size, time: time)
+    }
+
+    private func compose(style: BackgroundStyle, size: CGSize, time: Double) -> CIImage {
         let rect = CGRect(origin: .zero, size: size)
         var base: CIImage
         switch style.kind {
@@ -69,17 +85,17 @@ final class BackgroundRenderer {
         let pts = anchors.map { a -> CIVector in
             CIVector(x: a.0 + 0.22 * sin(t * a.2 + a.3), y: a.1 + 0.18 * cos(t * a.2 * 0.83 + a.3))
         }
-        let small = CGSize(width: max(8, ceil(size.width / 8)), height: max(8, ceil(size.height / 8)))
+        let small = CGSize(width: max(8, ceil(size.width / 4)), height: max(8, ceil(size.height / 4)))
         let cvs = colors.prefix(5).map { CIVector(x: $0.r, y: $0.g, z: $0.b, w: 1) }
         let args: [Any] = [CIVector(x: small.width, y: small.height), t] + cvs + pts
         guard let k = Self.meshKernel,
               let low = k.apply(extent: CGRect(origin: .zero, size: small), arguments: args) else {
             return CIImage(color: CIColor(cgColor: colors[0].cgColor))
         }
+        // The field is smooth, so bilinear upscaling from quarter resolution is indistinguishable
+        // (the grain hides any residue) and costs a fraction of a full-resolution blur.
         return low.samplingLinear()
             .transformed(by: CGAffineTransform(scaleX: size.width / small.width, y: size.height / small.height))
-            .clampedToExtent()
-            .applyingGaussianBlur(sigma: 2)
     }
 
     private func linear(style: BackgroundStyle, size: CGSize, time: Double) -> CIImage {
@@ -101,8 +117,6 @@ final class BackgroundRenderer {
         guard let cg = ctx.makeImage() else { return CIImage.empty() }
         return CIImage(cgImage: cg).samplingLinear()
             .transformed(by: CGAffineTransform(scaleX: size.width / small.width, y: size.height / small.height))
-            .clampedToExtent()
-            .applyingGaussianBlur(sigma: 1.5)
     }
 
     private func picture(path: String, size: CGSize, blur: Double) -> CIImage? {
@@ -119,7 +133,7 @@ final class BackgroundRenderer {
         }
         out = out.cropped(to: CGRect(origin: .zero, size: size))
         // Flatten once so per-frame cost is a texture read.
-        if let cg = CIContext().createCGImage(out, from: out.extent) {
+        if let cg = CaptureVideoCompositor.context.createCGImage(out, from: out.extent) {
             out = CIImage(cgImage: cg)
         }
         imageCache = (path, size, blur, out)
@@ -129,7 +143,7 @@ final class BackgroundRenderer {
     private func grain(size: CGSize, amount: Double) -> CIImage {
         lock.lock(); defer { lock.unlock() }
         if let g = grainCache, g.0 == size, g.1 == amount { return g.2 }
-        let k = amount * 0.9
+        let k = amount * 0.6
         let noise = CIFilter(name: "CIRandomGenerator")!.outputImage!
             .cropped(to: CGRect(origin: .zero, size: size))
             .applyingFilter("CIColorMatrix", parameters: [

@@ -16,8 +16,15 @@ final class SelectionController {
     fileprivate var orderedWindows: [SCWindow] = []
     fileprivate let purpose: SelectionPurpose
     private var keyMonitor: Any?
+    private let optionsBar = RecordOptionsBar()
+
+    /// Keeps the running picker alive; overlay views only hold it weakly.
+    private static var active: SelectionController?
 
     init(purpose: SelectionPurpose) { self.purpose = purpose }
+
+    /// Cancels the picker. Also reachable through the overlay's `cancelOperation` (Esc).
+    fileprivate func cancel() { finish(nil) }
 
     func run(start: SelectionStart) async -> CaptureTarget? {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else {
@@ -28,6 +35,9 @@ final class SelectionController {
         orderedWindows = Self.frontToBack(content.windows)
         windowMode = start == .window
 
+        // A picker that's already open is cancelled rather than stacked.
+        Self.active?.cancel()
+        Self.active = self
         return await withCheckedContinuation { cont in
             continuation = cont
             for screen in NSScreen.screens {
@@ -37,6 +47,9 @@ final class SelectionController {
             }
             NSApp.activate(ignoringOtherApps: true)
             let mouse = NSEvent.mouseLocation
+            if purpose == .recording, let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+                optionsBar.show(on: screen)
+            }
             (windows.first { $0.frame.contains(mouse) } ?? windows.first)?.makeKey()
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
                 guard let self else { return e }
@@ -60,14 +73,22 @@ final class SelectionController {
     }
 
     fileprivate func finish(_ target: CaptureTarget?) {
+        guard let c = continuation else { return }
+        continuation = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
-        windows.forEach { $0.orderOut(nil) }
+        optionsBar.hide()
+        let closing = windows
         windows.removeAll()
-        let c = continuation
-        continuation = nil
+        for w in closing {
+            w.overlay.controller = nil
+            w.orderOut(nil)
+        }
+        if Self.active === self { Self.active = nil }
+        // Keep the windows alive until AppKit is done delivering the current event to them.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { _ = closing }
         // Give the window server a beat to remove the overlay before capturing.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { c?.resume(returning: target) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { c.resume(returning: target) }
     }
 
     fileprivate func display(for screen: NSScreen) -> SCDisplay? {
@@ -126,14 +147,18 @@ private final class OverlayWindow: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         contentView = overlay
         acceptsMouseMovedEvents = true
+        isReleasedWhenClosed = false
     }
 
     override var canBecomeKey: Bool { true }
+
+    // NSPanel closes itself on Esc by default; cancel the selection instead.
+    override func cancelOperation(_ sender: Any?) { overlay.controller?.cancel() }
 }
 
 private final class OverlayView: NSView {
     let screen: NSScreen
-    unowned let controller: SelectionController
+    weak var controller: SelectionController?
     private var dragStart: NSPoint?
     private var dragRect: NSRect?
 
@@ -152,7 +177,7 @@ private final class OverlayView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         NSCursor.crosshair.set()
-        controller.updateHover()
+        controller?.updateHover()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -161,7 +186,7 @@ private final class OverlayView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let s = dragStart, !controller.windowMode else { return }
+        guard let s = dragStart, let controller, !controller.windowMode else { return }
         let p = convert(event.locationInWindow, from: nil)
         var r = NSRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
         if event.modifierFlags.contains(.shift) {
@@ -175,12 +200,13 @@ private final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        controller.complete(screen: screen, rect: dragRect)
+        controller?.complete(screen: screen, rect: dragRect)
         dragStart = nil
         dragRect = nil
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        guard let controller else { return }
         let dim = NSColor.black.withAlphaComponent(controller.purpose == .recording ? 0.35 : 0.25)
         dim.setFill()
         bounds.fill()

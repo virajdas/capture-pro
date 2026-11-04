@@ -16,6 +16,10 @@ final class EditorModel {
     var trimStart: Double { didSet { project.edit.trimStart = trimStart; scheduleSave() } }
     var trimEnd: Double { didSet { project.edit.trimEnd = trimEnd; scheduleSave() } }
     var selectedSegment: UUID?
+    var camera: CameraStyle { didSet { project.edit.camera = camera; scheduleSave(); rebuild() } }
+    var systemVolume: Double { didSet { project.edit.systemVolume = systemVolume; applyAudio() } }
+    var microphoneVolume: Double { didSet { project.edit.microphoneVolume = microphoneVolume; applyAudio() } }
+    private var audioTracks: [(CMPersistentTrackID, Bool)] = []
 
     var currentTime: Double = 0
     var isPlaying = false
@@ -40,22 +44,57 @@ final class EditorModel {
         segmentsEdited = project.edit.segmentsEdited
         trimStart = project.edit.trimStart
         trimEnd = project.trimEnd
+        camera = project.edit.camera
+        systemVolume = project.edit.systemVolume
+        microphoneVolume = project.edit.microphoneVolume
         cursors = project.cursorImages()
         Task { await setUpPlayer() }
     }
 
     var sourceSize: CGSize { CGSize(width: project.info.pixelWidth, height: project.info.pixelHeight) }
 
-    private func previewCanvas() -> CGSize {
-        RenderState.canvasSize(source: sourceSize, style: style, shortSide: min(1080, export.resolution.shortSide))
+    var previewSize: CGSize { previewCanvas() }
+
+    /// Samples the camera frame at the playhead and picks its backdrop colour as the key.
+    func detectKeyColor() async {
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: project.cameraURL))
+        gen.maximumSize = CGSize(width: 640, height: 640)
+        let t = max(0, currentTime - project.info.cameraOffset)
+        guard let (img, _) = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)),
+              let color = ChromaKey.detect(in: CIImage(cgImage: img)) else { return }
+        camera.keyColor = color
+        camera.chromaKey = true
     }
 
-    private func makeState(canvas: CGSize) -> RenderState {
-        let timeline = MotionTimeline(input: project.input, duration: duration, segments: activeSegments,
-                                      style: style, aspect: sourceSize.width / max(sourceSize.height, 1))
-        return RenderState(style: style, canvas: canvas,
-                           pointSize: CGSize(width: project.info.pointWidth, height: project.info.pointHeight),
-                           timeline: timeline, cursors: cursors, timeOffset: 0)
+    private func previewCanvas() -> CGSize {
+        // The preview pane is rarely wider than ~1600 px; rendering more just costs frames.
+        RenderState.canvasSize(source: sourceSize, style: style, shortSide: min(900, export.resolution.shortSide))
+    }
+
+    /// Motion only depends on these; colour and frame tweaks reuse the existing timeline.
+    private struct MotionKey: Equatable {
+        let segments: [ZoomSegment], cursor: CursorStyle, zoom: ZoomStyle
+    }
+    private var motionCache: (MotionKey, MotionTimeline)?
+
+    private func makeState(canvas: CGSize) async -> RenderState {
+        let key = MotionKey(segments: activeSegments, cursor: style.cursor, zoom: style.zoom)
+        let timeline: MotionTimeline
+        if let c = motionCache, c.0 == key {
+            timeline = c.1
+        } else {
+            let (input, duration, style, aspect) = (project.input, duration, style, sourceSize.width / max(sourceSize.height, 1))
+            timeline = await Task.detached(priority: .userInitiated) {
+                MotionTimeline(input: input, duration: duration, segments: key.segments, style: style, aspect: aspect)
+            }.value
+            motionCache = (key, timeline)
+        }
+        let (style, camera, cursors) = (style, camera, cursors)
+        let point = CGSize(width: project.info.pointWidth, height: project.info.pointHeight)
+        return await Task.detached(priority: .userInitiated) {
+            RenderState(style: style, canvas: canvas, pointSize: point, timeline: timeline, cursors: cursors,
+                        timeOffset: 0, preview: true, camera: camera)
+        }.value
     }
 
     private var activeSegments: [ZoomSegment] {
@@ -63,15 +102,19 @@ final class EditorModel {
     }
 
     private func setUpPlayer() async {
-        let comp = Compositor(state: makeState(canvas: previewCanvas()))
+        let comp = Compositor(state: await makeState(canvas: previewCanvas()))
         compositor = comp
         // Preview always shows the whole recording; trim is applied on export.
-        let full = RecordingProject(url: project.url, info: project.info, input: project.input,
-                                    edit: EditState(style: style, export: export, trimStart: 0, trimEnd: nil))
+        var fullEdit = project.edit
+        fullEdit.trimStart = 0
+        fullEdit.trimEnd = nil
+        let full = RecordingProject(url: project.url, info: project.info, input: project.input, edit: fullEdit)
         guard let built = try? await CompositionBuilder.build(project: full, compositor: comp, fps: 60) else { return }
         video = built.video
+        audioTracks = built.audioTracks
         let item = AVPlayerItem(asset: built.asset)
         item.videoComposition = built.video
+        item.audioMix = built.audioMix
         item.seekingWaitsForVideoCompositionRendering = true
         player.replaceCurrentItem(with: item)
         player.actionAtItemEnd = .pause
@@ -121,19 +164,36 @@ final class EditorModel {
         rebuild()
     }
 
+    private var rebuildTask: Task<Void, Never>?
+
+    /// Coalesces rapid edits (slider drags) and does the heavy lifting off the main thread.
     private func rebuild() {
-        guard let compositor else { return }
-        rebuildGeneration += 1
-        let gen = rebuildGeneration
-        let canvas = previewCanvas()
-        let state = makeState(canvas: canvas)
-        guard gen == rebuildGeneration else { return }
-        compositor.state = state
-        guard let item = player.currentItem, let video else { return }
-        if video.renderSize != canvas { video.renderSize = canvas }
-        // Re-assigning the composition makes AVPlayer re-render the paused frame.
-        item.videoComposition = video.mutableCopy() as? AVVideoComposition
-        if !isPlaying { seek(to: currentTime) }
+        guard compositor != nil else { return }
+        rebuildTask?.cancel()
+        rebuildTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(30))
+            guard let self, !Task.isCancelled else { return }
+            let canvas = self.previewCanvas()
+            let state = await self.makeState(canvas: canvas)
+            guard !Task.isCancelled, let compositor = self.compositor else { return }
+            compositor.state = state
+            guard let item = self.player.currentItem, let video = self.video else { return }
+            if video.renderSize != canvas { video.renderSize = canvas }
+            // Re-assigning the composition makes AVPlayer re-render the paused frame.
+            item.videoComposition = video.mutableCopy() as? AVVideoComposition
+            if !self.isPlaying { self.seek(to: self.currentTime) }
+        }
+    }
+
+    private func applyAudio() {
+        scheduleSave()
+        player.currentItem?.audioMix = CompositionBuilder.audioMix(
+            for: player.currentItem!.asset, project: project, tracks: audioTracks)
+    }
+
+    func setAllSegments(enabled: Bool) {
+        segmentsEdited = true
+        segments = segments.map { var s = $0; s.enabled = enabled; return s }
     }
 
     func regenerateSegments() {
@@ -200,6 +260,7 @@ final class EditorModel {
                 }
                 exportProgress = nil
                 exportResult = url
+                if Preferences.shared.stored.revealAfterExport { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 if Preferences.shared.stored.playSounds { NSSound(named: "Glass")?.play() }
             } catch is CancellationError {
                 exportProgress = nil

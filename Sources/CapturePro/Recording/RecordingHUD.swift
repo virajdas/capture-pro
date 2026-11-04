@@ -11,6 +11,7 @@ enum Countdown {
                                                 width: size.width, height: size.height),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .screenSaver
+        panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.ignoresMouseEvents = true
@@ -68,6 +69,7 @@ final class AreaFrame {
         let r = rect.insetBy(dx: -4, dy: -4)
         let p = NSPanel(contentRect: r, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.level = .statusBar
+        p.isReleasedWhenClosed = false
         p.isOpaque = false
         p.backgroundColor = .clear
         p.ignoresMouseEvents = true

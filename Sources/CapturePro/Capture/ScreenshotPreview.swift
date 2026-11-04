@@ -16,12 +16,13 @@ final class ScreenshotPreview {
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating
+        panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = false
-        let view = PreviewView(image: NSImage(cgImage: image, size: .zero), file: file,
+        let view = PreviewView(image: NSImage(cgImage: image, size: .zero), cgImage: image, file: file,
                                onHover: { hovering in hovering ? cancelTimer() : scheduleDismiss() },
                                onClose: { dismiss(animated: true) })
         panel.contentView = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
@@ -65,6 +66,7 @@ final class ScreenshotPreview {
 
 private struct PreviewView: View {
     let image: NSImage
+    let cgImage: CGImage
     let file: URL?
     let onHover: (Bool) -> Void
     let onClose: () -> Void
@@ -78,7 +80,7 @@ private struct PreviewView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
                 .onTapGesture {
-                    if let file { NSWorkspace.shared.open(file) }
+                    AnnotationEditor.open(image: cgImage, file: file)
                     onClose()
                 }
                 .onDrag {

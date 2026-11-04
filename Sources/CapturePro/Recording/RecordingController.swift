@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Observation
 
 /// Orchestrates a recording: pick a target, count down, record, then hand off to the editor.
@@ -12,6 +13,7 @@ final class RecordingController {
     private(set) var startedAt: Date?
     private var recorder: Recorder?
     private let frame = AreaFrame()
+    private let bubble = CameraBubble()
 
     var isBusy: Bool { phase != .idle }
 
@@ -43,15 +45,34 @@ final class RecordingController {
         }
         let prefs = Preferences.shared.stored
         let cocoaRect = SelectionController.cocoaRect(target.globalRect)
+        let url = RecordingProject.newURL(in: Preferences.shared.recordingFolderURL)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+
+        // The camera starts before the countdown so you can frame yourself in the bubble.
+        var camera: CameraRecorder?
+        if prefs.camera, await CameraRecorder.requestAccess() {
+            camera = try? CameraRecorder(url: url.appendingPathComponent("camera.mov"), deviceID: prefs.cameraID)
+            if let camera {
+                camera.startPreview()
+                bubble.show(session: camera.session)
+            }
+        }
         guard await Countdown.run(seconds: prefs.countdown, over: cocoaRect) else {
+            bubble.hide()
+            _ = await camera?.stop()
+            try? FileManager.default.removeItem(at: url)
             phase = .idle
             return
         }
 
+        // Ask for the microphone the first time; if refused, record without it.
+        var micAllowed = false
+        if prefs.microphone {
+            micAllowed = await AVCaptureDevice.requestAccess(for: .audio)
+        }
         let options = RecordingOptions(fps: prefs.fps, hideSystemCursor: prefs.hideSystemCursor,
-                                       systemAudio: prefs.systemAudio, microphone: prefs.microphone,
-                                       microphoneID: prefs.microphoneID)
-        let url = RecordingProject.newURL(in: Preferences.shared.recordingFolderURL)
+                                       systemAudio: prefs.systemAudio, microphone: micAllowed,
+                                       microphoneID: prefs.microphoneID, camera: camera)
         let rec = Recorder(target: target, options: options, projectURL: url)
         rec.onError = { [weak self] error in
             NSLog("Recording stopped: \(error)")
@@ -61,6 +82,8 @@ final class RecordingController {
             try await rec.start()
         } catch {
             phase = .idle
+            bubble.hide()
+            _ = await camera?.stop()
             try? FileManager.default.removeItem(at: url)
             presentError("Couldn’t start recording", error)
             return
@@ -76,6 +99,7 @@ final class RecordingController {
         guard phase == .recording, let rec = recorder else { return }
         phase = .finishing
         frame.hide()
+        bubble.hide()
         recorder = nil
         do {
             let project = try await rec.stop()
@@ -97,8 +121,8 @@ final class RecordingController {
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting([project.url])
         case .export:
-            let out = Preferences.shared.exportFolderURL
-                .appendingPathComponent(project.name + "." + (project.edit.export.format == .gif ? "gif" : project.edit.export.format.rawValue))
+            let out = ExportSheet.uniqueURL(in: Preferences.shared.exportFolderURL, name: project.name,
+                                            ext: project.edit.export.format == .gif ? "gif" : project.edit.export.format.rawValue)
             do {
                 try await Exporter().export(project: project, to: out) { _ in }
                 NSWorkspace.shared.activateFileViewerSelecting([out])

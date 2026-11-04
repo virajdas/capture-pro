@@ -3,9 +3,12 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
+    private let services = ServiceProvider()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusBar = StatusBarController()
+        NSApp.servicesProvider = services
+        NSUpdateDynamicServices()
         Actions.registerHotKeys()
         NotificationCenter.default.addObserver(forName: .preferencesChanged, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Actions.registerHotKeys() }
@@ -16,19 +19,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if CommandLine.arguments.contains("--settings") {
             SettingsWindowController.show()
         }
-        if !UserDefaults.standard.bool(forKey: "onboarded") {
-            UserDefaults.standard.set(true, forKey: "onboarded")
-            SettingsWindowController.show()
+        if OnboardingWindowController.needsOnboarding || CommandLine.arguments.contains("--onboarding") {
+            OnboardingWindowController.show()
         }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.pathExtension == "capturepro" {
-            if let p = try? RecordingProject.load(url) { EditorWindowController.open(p) }
+        for url in urls {
+            if url.pathExtension == "capturepro" {
+                if let p = try? RecordingProject.load(url) { EditorWindowController.open(p) }
+            } else {
+                ImageOpener.annotate(url)
+            }
         }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
+/// "Open With › Capture Pro" and the "Annotate with Capture Pro" Finder service both land here.
+@MainActor
+enum ImageOpener {
+    static func annotate(_ url: URL) {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldAllowFloat: false] as CFDictionary)
+        else { NSSound.beep(); return }
+        AnnotationEditor.open(image: image, file: url)
+    }
+}
+
+final class ServiceProvider: NSObject {
+    @objc func annotateImage(_ pboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        let urls = pboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        DispatchQueue.main.async {
+            for url in urls { ImageOpener.annotate(url) }
+        }
+    }
 }
 
 let args = CommandLine.arguments

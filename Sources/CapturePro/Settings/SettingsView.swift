@@ -56,6 +56,13 @@ private struct GeneralPane: View {
                     Permissions.requestAccessibility()
                 }
             }
+            Section("Save locations") {
+                LabeledContent("Screenshots") { FolderPicker(path: $prefs.stored.screenshotFolder) }
+                LabeledContent("Recording projects") { FolderPicker(path: $prefs.stored.recordingFolder) }
+                LabeledContent("Exported videos") { FolderPicker(path: $prefs.stored.exportFolder) }
+                Toggle("Ask where to save each export", isOn: $prefs.stored.askWhereToExport)
+                Toggle("Show exports in Finder when done", isOn: $prefs.stored.revealAfterExport)
+            }
             Section("Menu bar") {
                 Picker("Clicking the icon", selection: $prefs.stored.menuClick) {
                     ForEach(MenuClickAction.allCases) { Text($0.label).tag($0) }
@@ -112,12 +119,11 @@ private struct ScreenshotPane: View {
         Form {
             Section("After capturing") {
                 Toggle("Copy to clipboard", isOn: $prefs.stored.copyScreenshots)
-                Toggle("Save to folder", isOn: $prefs.stored.saveScreenshots)
-                if prefs.stored.saveScreenshots {
-                    FolderPicker(path: $prefs.stored.screenshotFolder)
+                Toggle("Also save to the screenshots folder", isOn: $prefs.stored.saveScreenshots)
+                Picker("Then", selection: $prefs.stored.afterScreenshot) {
+                    ForEach(AfterScreenshot.allCases) { Text($0.label).tag($0) }
                 }
-                Toggle("Show floating preview", isOn: $prefs.stored.showPreview)
-                if prefs.stored.showPreview {
+                if prefs.stored.afterScreenshot == .preview {
                     LabeledSlider("Preview stays for", value: $prefs.stored.previewSeconds, in: 2...20, format: "%.0f s")
                 }
             }
@@ -170,8 +176,6 @@ private struct RecordingPane: View {
                 Picker("Then", selection: $prefs.stored.afterRecording) {
                     ForEach(AfterRecording.allCases) { Text($0.label).tag($0) }
                 }
-                LabeledContent("Projects") { FolderPicker(path: $prefs.stored.recordingFolder) }
-                LabeledContent("Exports") { FolderPicker(path: $prefs.stored.exportFolder) }
             }
             Section("Default export") {
                 ExportControls(settings: $prefs.stored.export)
@@ -226,6 +230,7 @@ private struct LookPane: View {
                 Text("Defaults for new recordings and beautified screenshots. Every recording can be tuned further in the editor.")
                     .font(.callout).foregroundStyle(.secondary)
             }
+            Section("Looks") { PresetGallery(style: $prefs.stored.style, columns: 4) }
             Section("Background") { BackgroundControls(style: $prefs.stored.style.background) }
             Section("Frame") { FrameControls(style: $prefs.stored.style.frame) }
             Section("Cursor") { CursorControls(style: $prefs.stored.style.cursor) }

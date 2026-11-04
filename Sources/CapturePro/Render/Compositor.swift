@@ -11,9 +11,15 @@ final class RenderState {
     let fallback: CursorSprite
     /// Source time = composition time + offset (trimming).
     let timeOffset: Double
+    /// Real-time preview: cheaper resampling so playback never drops frames.
+    let preview: Bool
+    let camera: CameraStyle
 
     init(style: StyleSettings, canvas: CGSize, pointSize: CGSize, timeline: MotionTimeline?,
-         cursors: [Int: (CGImage, CursorImageInfo)], timeOffset: Double) {
+         cursors: [Int: (CGImage, CursorImageInfo)], timeOffset: Double, preview: Bool = false,
+         camera: CameraStyle = CameraStyle()) {
+        self.preview = preview
+        self.camera = camera
         self.style = style
         self.canvas = canvas
         self.pointSize = pointSize
@@ -43,13 +49,41 @@ final class Compositor {
 
     init(state: RenderState) { _state = state }
 
+    // The frame's shadow never changes between frames, so it's blurred once and reused.
+    private struct ShadowKey: Hashable {
+        let canvas: CGSize, rect: CGRect, radius: Double, frame: FrameStyle
+        func hash(into h: inout Hasher) { h.combine(rect.minX); h.combine(rect.width); h.combine(canvas.width); h.combine(frame) }
+    }
+    private var shadowCache: (ShadowKey, CIImage)?
+
+    private func shadow(for rect: CGRect, radius: Double, canvas: CGSize, frame fs: FrameStyle, unit: Double) -> CIImage {
+        let key = ShadowKey(canvas: canvas, rect: rect, radius: radius, frame: fs)
+        lock.lock()
+        if let c = shadowCache, c.0 == key { lock.unlock(); return c.1 }
+        lock.unlock()
+        let spread = fs.shadowSpread * unit
+        let c = fs.shadowColor
+        let shape = Self.roundedRect(rect.insetBy(dx: -spread, dy: -spread), radius: max(0, radius + spread),
+                                     color: CIColor(red: c.r, green: c.g, blue: c.b, alpha: fs.shadowOpacity))
+        let blurred = shape
+            .applyingGaussianBlur(sigma: max(0.1, fs.shadowRadius * unit / 2))
+            .transformed(by: CGAffineTransform(translationX: fs.shadowOffsetX * unit, y: -fs.shadowOffset * unit))
+            .cropped(to: CGRect(origin: .zero, size: canvas))
+        var image = blurred
+        if let cg = CaptureVideoCompositor.context.createCGImage(blurred, from: blurred.extent) {
+            image = CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: blurred.extent.minX, y: blurred.extent.minY))
+        }
+        lock.lock(); shadowCache = (key, image); lock.unlock()
+        return image
+    }
+
     var state: RenderState {
         get { lock.lock(); defer { lock.unlock() }; return _state }
         set { lock.lock(); _state = newValue; lock.unlock() }
     }
 
     /// Composes one output frame. `time` is the composition time (seconds from trim start).
-    func render(source: CIImage, time: Double) -> CIImage {
+    func render(source: CIImage, camera: CIImage? = nil, time: Double) -> CIImage {
         let st = state
         let t = time + st.timeOffset
         let W = st.canvas.width, H = st.canvas.height
@@ -71,7 +105,9 @@ final class Compositor {
         var screen = source
             .cropped(to: CGRect(x: src.minX + vx, y: src.minY + vyBottom, width: vw, height: vh))
             .transformed(by: CGAffineTransform(translationX: -(src.minX + vx), y: -(src.minY + vyBottom)))
-        if abs(k - 1) > 0.001 {
+        if st.preview {
+            screen = screen.samplingLinear().transformed(by: CGAffineTransform(scaleX: k, y: k))
+        } else if abs(k - 1) > 0.001 {
             screen = screen.applyingFilter("CILanczosScaleTransform", parameters: [
                 kCIInputScaleKey: k, kCIInputAspectRatioKey: 1,
             ])
@@ -121,11 +157,8 @@ final class Compositor {
         ])
 
         var out = background.image(style: st.style.background, size: st.canvas, time: t)
-        if fs.shadowOpacity > 0.01, fs.padding > 0.001 {
-            let shadow = Self.roundedRect(screenRect, radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: fs.shadowOpacity))
-                .applyingGaussianBlur(sigma: max(0.1, fs.shadowRadius * unit / 2))
-                .transformed(by: CGAffineTransform(translationX: 0, y: -fs.shadowOffset * unit))
-            out = shadow.composited(over: out)
+        if fs.shadowEnabled, fs.shadowOpacity > 0.01, fs.padding > 0.001 {
+            out = shadow(for: screenRect, radius: radius, canvas: st.canvas, frame: fs, unit: unit).composited(over: out)
         }
         out = screen.composited(over: out)
         if fs.border {
@@ -136,6 +169,9 @@ final class Compositor {
                 "inputColor": CIColor(red: 1, green: 1, blue: 1, alpha: 0.14),
             ])?.outputImage
             if let stroke { out = stroke.composited(over: out) }
+        }
+        if let camera, st.camera.visible {
+            out = CameraLayer.draw(camera, style: st.camera, over: out, canvas: st.canvas, unit: unit)
         }
         return out.cropped(to: canvas)
     }
@@ -221,9 +257,10 @@ final class Compositor {
     // MARK: Stills
 
     /// Beautifies a screenshot with the same background and frame as recordings.
-    static func beautify(_ image: CGImage, style: StyleSettings) -> CGImage? {
+    static func beautify(_ image: CGImage, style: StyleSettings, minimumPadding: Double = 0) -> CGImage? {
         var style = style
         style.frame.aspect = .auto
+        style.frame.padding = max(style.frame.padding, minimumPadding)
         let src = CIImage(cgImage: image)
         let short = min(src.extent.width, src.extent.height)
         let canvasShort = short / max(0.4, 1 - 2 * style.frame.padding)

@@ -23,18 +23,25 @@ Most screen tools are either bare (the system ones) or heavy (accounts, uploads,
 **Capture**
 - Click the menu bar icon (or use a shortcut) to capture an area, a window or the whole screen
 - Area picker with live dimensions; `Space` switches to window picking, `Shift` constrains to a square, `Esc` cancels
-- Copy to clipboard, save as PNG / JPEG / HEIC, floating preview you can drag into any app
-- Optional "Beautify" — screenshots get the same background, padding, corners and shadow as recordings
+- Copied to the clipboard by default, then opened in a calm **annotation editor**
+- Optionally also saved as PNG / JPEG / HEIC, or shown as a floating preview instead
+
+**Annotate**
+- Pen, highlighter, line, arrows (classic, open, double), rectangle, ellipse, text, numbered steps, callouts, emoji stamps
+- Blur, pixelate and redact private details; spotlight and magnifier to draw the eye
+- Crop, colours, stroke, opacity, fill and shadows; select, move, resize, duplicate, undo/redo
+- Copy, save, share, or one-tap **Beautify** with the same backgrounds as recordings
 
 **Record**
 - ScreenCaptureKit capture at native resolution and 30/60 fps, HEVC
-- System audio and microphone (each optional)
+- System audio and microphone — off by default, toggled per recording from the bar that appears while you choose what to record (or from the menu)
 - Countdown, a subtle frame around the recorded area, and a live timer in the menu bar — click it to stop
 - The real cursor is hidden while recording and re-drawn afterwards, so it can be smoothed, enlarged and animated
 
 **Automatic polish** (all adjustable, per recording)
+- **Looks**: 21 curated presets (Studio, Minimal, Midnight, Keynote, Calm, Cinematic, Playful, Tutorial, Vertical 9:16, Square, Edge to Edge…) and 25 palettes
 - **Auto-zoom**: clicks and typing bursts become zoom segments; nearby actions merge into one smooth zoom
-- **Camera**: spring-physics zoom and pan that follows the cursor with a dead-zone, never shows outside the frame, and pre-aims so zooms land exactly on target
+- **Camera**: eased zoom transitions (Smooth, Gentle, Cinematic, Snappy, Springy) that push straight into their target — the zoom is interpolated in log space around the frame's fixed point, so there's no sideways swoop — then a soft, critically-damped pan that follows the cursor
 - **Cursor**: spring-smoothed with lag compensation, enlarged high-res system cursor shapes, press animation, click ripple or halo, motion blur, hides when idle
 - **Frame**: flowing mesh gradients (12 calm palettes or your own colors), linear gradients, solid colors, your desktop wallpaper or any image — with padding, corner radius, shadow, edge highlight and fine grain
 - **Motion blur** on fast camera moves
@@ -42,8 +49,9 @@ Most screen tools are either bare (the system ones) or heavy (accounts, uploads,
 
 **Editor**
 - Live preview, filmstrip timeline, trim handles
-- Zoom track: drag zooms to move them, drag edges to resize, double-click to add, per-zoom level and fixed focus point
-- Export MP4 / MOV (H.264 or HEVC, 720p–4K, 30/60 fps, quality presets) or GIF
+- Zoom track: switch individual zooms on or off, drag to move, drag edges to resize, double-click to add, per-zoom level and fixed focus point
+- Audio: per-track volume and mute for system audio and microphone
+- Export MP4 / MOV (H.264 or HEVC, 720p–4K, 30/60 fps, quality presets) or GIF straight to your chosen export folder (or ask each time)
 - "Save as Default Look" makes your tweaks the default for future recordings
 
 <p align="center"><img src="docs/zoom.png" width="720" alt="Automatic zoom on a click, with a ripple"></p>
@@ -52,7 +60,7 @@ Most screen tools are either bare (the system ones) or heavy (accounts, uploads,
 
 1. Download `CapturePro-x.y.z.zip` from [Releases](../../releases) and move **Capture Pro.app** to Applications.
 2. The app is open source and not notarized, so the first time, **right-click → Open** (or run `xattr -dr com.apple.quarantine "/Applications/Capture Pro.app"`).
-3. Grant **Screen Recording** when asked (System Settings › Privacy & Security › Screen & System Audio Recording). Optionally grant **Accessibility** so auto-zoom can react to typing — only keystroke *timing* is recorded, never which keys.
+3. A short welcome tour walks you through permissions, shortcuts and picking a look. Grant **Screen Recording** when asked (System Settings › Privacy & Security › Screen & System Audio Recording). Optionally grant **Accessibility** so auto-zoom can react to typing — only keystroke *timing* is recorded, never which keys.
 
 Requires macOS 15 Sequoia or later.
 

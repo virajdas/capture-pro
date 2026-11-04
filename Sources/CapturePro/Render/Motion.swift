@@ -167,15 +167,13 @@ final class MotionTimeline {
             }
         }
 
-        // Camera: one spring per channel chasing step targets, carrying velocity across retargets.
+        // Camera: each zoom is an eased transition in, a cursor-following hold, and an eased
+        // transition out. Transitions interpolate the zoom level in log space around the one
+        // point that stays put on screen, so the camera glides straight into its target with
+        // no sideways swoop and never reveals anything outside the frame.
         let z = style.zoom
-        let cam = Spring(response: z.response, dampingFraction: z.damping)
-        let segs = segments.sorted { $0.start < $1.start }
-        var sc = 1.0, svel = 0.0
-        var ax = 0.5, ay = 0.5, avx = 0.0, avy = 0.0
-        var aimX = 0.5, aimY = 0.5
-        var segIdx = 0
-        var activeSeg: Int? = nil
+        let segs = Self.prepare(segments)
+        let follow = Spring(response: max(0.2, z.response), dampingFraction: 1)
 
         func lookahead(_ t: Double) -> (Double, Double) {
             var x = 0.0, y = 0.0
@@ -191,55 +189,96 @@ final class MotionTimeline {
             return lookahead(seg.start + min(z.leadIn, seg.duration / 2))
         }
 
-        var prevRendered = (s: 1.0, x: 0.5, y: 0.5)
-        for i in 0..<n {
-            let t = Double(i) * dt
-            while segIdx < segs.count && segs[segIdx].end <= t { segIdx += 1 }
-            let inside = segIdx < segs.count && segs[segIdx].start <= t
-            let seg = inside ? segs[segIdx] : nil
-            if inside, activeSeg != segIdx {
-                activeSeg = segIdx
-                (aimX, aimY) = entryAim(segs[segIdx])
-            } else if !inside {
-                activeSeg = nil
-            }
+        var cam = [(s: Double, x: Double, y: Double)](repeating: (1, 0.5, 0.5), count: n)
+        for seg in segs {
+            let i0 = max(0, Int((seg.start * Self.rate).rounded()))
+            let i3 = min(n - 1, Int((seg.end * Self.rate).rounded()))
+            guard i3 > i0 else { continue }
+            let S = max(1, seg.scale)
+            let h = 0.5 / S
+            let dur = seg.duration
+            let din = min(z.zoomInDuration, dur * 0.45)
+            let dout = min(z.zoomOutDuration, dur * 0.45)
 
-            let targetScale = seg?.scale ?? 1
-            if let seg {
-                if seg.focusX == nil, z.followCursor {
-                    // Re-aim only when the cursor leaves the central 70% of the zoomed view.
+            // Where the camera looks while fully zoomed, sampled for the whole segment.
+            var path = [(Double, Double)](repeating: (0.5, 0.5), count: i3 - i0 + 1)
+            var (aimX, aimY) = entryAim(seg)
+            var px = aimX.clamped(h, 1 - h), py = aimY.clamped(h, 1 - h), vx = 0.0, vy = 0.0
+            let tracks = seg.focusX == nil && z.followCursor
+            for i in i0...i3 {
+                let t = Double(i) * dt
+                if tracks, t > seg.start + din * 0.5 {
+                    // Re-aim only when the cursor leaves the calm central 70% of the view.
                     let (fx, fy) = lookahead(t)
-                    let half = 0.5 / seg.scale * 0.7
-                    if abs(fx - aimX) > half || abs(fy - aimY) > half {
-                        aimX = fx; aimY = fy
-                    }
+                    if abs(fx - aimX) > h * 0.7 || abs(fy - aimY) > h * 0.7 { aimX = fx; aimY = fy }
+                    follow.step(&px, &vx, target: aimX.clamped(h, 1 - h), dt: dt)
+                    follow.step(&py, &vy, target: aimY.clamped(h, 1 - h), dt: dt)
                 }
-            } else if sc <= 1.0005, segIdx < segs.count {
-                // Pre-aim while unzoomed so the next zoom scales straight toward its focus.
-                (aimX, aimY) = entryAim(segs[segIdx])
-                ax = aimX; ay = aimY; avx = 0; avy = 0
+                path[i - i0] = (px, py)
+            }
+            func held(_ t: Double) -> (Double, Double) {
+                path[min(path.count - 1, max(0, Int((t - seg.start) * Self.rate)))]
             }
 
-            let h = 0.5 / targetScale
-            let tx = aimX.clamped(h, 1 - h), ty = aimY.clamped(h, 1 - h)
-            cam.step(&sc, &svel, target: targetScale, dt: dt)
-            cam.step(&ax, &avx, target: tx, dt: dt)
-            cam.step(&ay, &avy, target: ty, dt: dt)
+            let full = (s: 1.0, x: 0.5, y: 0.5)
+            for i in i0...i3 {
+                let t = Double(i) * dt
+                if t < seg.start + din {
+                    let p = z.curve.value((t - seg.start) / din)
+                    let target = held(seg.start + din)
+                    cam[i] = Self.glide(full, (S, target.0, target.1), p)
+                } else if t > seg.end - dout {
+                    let p = z.curve.value((t - (seg.end - dout)) / dout)
+                    let from = held(seg.end - dout)
+                    cam[i] = Self.glide((S, from.0, from.1), full, p)
+                } else {
+                    let c = held(t)
+                    cam[i] = (S, c.0, c.1)
+                }
+            }
+        }
 
-            let rs = max(1, sc)
+        var prev = (s: 1.0, x: 0.5, y: 0.5)
+        for i in 0..<n {
+            let rs = max(1, cam[i].s)
             let rh = 0.5 / rs
-            let rx = ax.clamped(rh, 1 - rh), ry = ay.clamped(rh, 1 - rh)
+            let rx = cam[i].x.clamped(rh, 1 - rh), ry = cam[i].y.clamped(rh, 1 - rh)
             out[i].camScale = rs
             out[i].camX = rx
             out[i].camY = ry
             if i > 0 {
-                out[i].camVScale = (rs - prevRendered.s) / dt
-                out[i].camVX = (rx - prevRendered.x) / dt
-                out[i].camVY = (ry - prevRendered.y) / dt
+                out[i].camVScale = (rs - prev.s) / dt
+                out[i].camVX = (rx - prev.x) / dt
+                out[i].camVY = (ry - prev.y) / dt
             }
-            prevRendered = (rs, rx, ry)
+            prev = (rs, rx, ry)
         }
         samples = out
+    }
+
+    /// Enabled segments in order, trimmed so they never overlap.
+    static func prepare(_ segments: [ZoomSegment]) -> [ZoomSegment] {
+        var out: [ZoomSegment] = []
+        for var s in segments.filter(\.enabled).sorted(by: { $0.start < $1.start }) {
+            if let last = out.last, s.start < last.end { s.start = last.end }
+            if s.end - s.start >= 0.3 { out.append(s) }
+        }
+        return out
+    }
+
+    /// Interpolates between two camera framings: zoom in log space about the framing's fixed
+    /// point, so the move reads as one straight push in (or pull out) rather than a zoom plus a pan.
+    static func glide(_ a: (s: Double, x: Double, y: Double), _ b: (s: Double, x: Double, y: Double),
+                      _ p: Double) -> (s: Double, x: Double, y: Double) {
+        let s = exp(lerp(log(a.s), log(b.s), p))
+        func axis(_ ca: Double, _ cb: Double) -> Double {
+            let ia = 1 / a.s, ib = 1 / b.s
+            guard abs(ia - ib) > 1e-6 else { return lerp(ca, cb, p) }
+            let u = 0.5 + (cb - ca) / (ia - ib)
+            let fixed = ca + (u - 0.5) * ia
+            return fixed - (u - 0.5) / s
+        }
+        return (s, axis(a.x, b.x), axis(a.y, b.y))
     }
 
     func sample(at t: Double) -> MotionSample {

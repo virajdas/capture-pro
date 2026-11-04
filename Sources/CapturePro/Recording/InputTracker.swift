@@ -16,6 +16,9 @@ final class InputTracker {
     private let queue = DispatchQueue(label: "capture.input", qos: .userInteractive)
     private let lock = NSLock()
     private var cachedArea: CGRect
+    /// Offset from NSEvent timestamps (system uptime) to the host clock used by video frames.
+    private let uptimeToHost = CACurrentMediaTime() - ProcessInfo.processInfo.systemUptime
+    private var lastEventMove = 0.0
     private var lastAreaRefresh = 0.0
 
     init(area: @escaping () -> CGRect) {
@@ -40,7 +43,9 @@ final class InputTracker {
     func start() {
         startHost = CACurrentMediaTime()
         let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now(), repeating: .milliseconds(8), leeway: .milliseconds(1))
+        // Real mouse events carry exact timestamps; this timer only fills gaps (e.g. when the
+        // pointer is moved by something that doesn't emit events).
+        t.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(2))
         t.setEventHandler { [weak self] in self?.sampleCursor() }
         t.resume()
         timer = t
@@ -52,6 +57,13 @@ final class InputTracker {
         if let m = NSEvent.addLocalMonitorForEvents(matching: mouse, handler: { [weak self] e in self?.click(e); return e }) {
             monitors.append(m)
         }
+        let motion: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: motion, handler: { [weak self] e in self?.moved(e) }) {
+            monitors.append(m)
+        }
+        if let m = NSEvent.addLocalMonitorForEvents(matching: motion, handler: { [weak self] e in self?.moved(e); return e }) {
+            monitors.append(m)
+        }
         if let m = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] _ in self?.stamp(\.scrolls) }) {
             monitors.append(m)
         }
@@ -60,7 +72,7 @@ final class InputTracker {
             monitors.append(m)
         }
 
-        let ct = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] _ in self?.sampleCursorShape() }
+        let ct = Timer(timeInterval: 1.0 / 10, repeats: true) { [weak self] _ in self?.sampleCursorShape() }
         RunLoop.main.add(ct, forMode: .common)
         cursorTimer = ct
         sampleCursorShape()
@@ -90,12 +102,22 @@ final class InputTracker {
             lastAreaRefresh = t
             cachedArea = areaProvider()
         }
-        guard let loc = CGEvent(source: nil)?.location else { return }
+        guard t - lastEventMove > 0.05, let loc = CGEvent(source: nil)?.location else { return }
         let (x, y) = normalized(loc)
         lock.lock()
         if let last = log.moves.last, last.x == x, last.y == y, t - last.t < 0.25 {
             lock.unlock(); return
         }
+        log.moves.append(MoveSample(t: t, x: x, y: y))
+        lock.unlock()
+    }
+
+    private func moved(_ e: NSEvent) {
+        guard let loc = e.cgEvent?.location else { return }
+        let t = e.timestamp + uptimeToHost - startHost
+        let (x, y) = normalized(loc)
+        lock.lock()
+        lastEventMove = t
         log.moves.append(MoveSample(t: t, x: x, y: y))
         lock.unlock()
     }

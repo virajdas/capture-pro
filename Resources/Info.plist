@@ -15,6 +15,7 @@
 	<key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+	<key>NSCameraUsageDescription</key><string>Capture Pro records your camera only when you turn on the camera for a recording.</string>
 	<key>NSMicrophoneUsageDescription</key><string>Capture Pro records your microphone only when you turn on microphone recording.</string>
 	<key>NSHumanReadableCopyright</key><string>MIT License</string>
 	<key>CFBundleDocumentTypes</key>
@@ -25,6 +26,22 @@
 			<key>LSHandlerRank</key><string>Owner</string>
 			<key>LSTypeIsPackage</key><true/>
 			<key>LSItemContentTypes</key><array><string>io.github.virajdas.capturepro.project</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key><string>Image</string>
+			<key>CFBundleTypeRole</key><string>Editor</string>
+			<key>LSHandlerRank</key><string>Alternate</string>
+			<key>LSItemContentTypes</key><array><string>public.image</string></array>
+		</dict>
+	</array>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key><dict><key>default</key><string>Annotate with Capture Pro</string></dict>
+			<key>NSMessage</key><string>annotateImage</string>
+			<key>NSPortName</key><string>Capture Pro</string>
+			<key>NSRequiredContext</key><dict/>
+			<key>NSSendFileTypes</key><array><string>public.image</string></array>
 		</dict>
 	</array>
 	<key>UTExportedTypeDeclarations</key>
