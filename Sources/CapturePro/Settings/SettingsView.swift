@@ -49,7 +49,7 @@ private struct GeneralPane: View {
         Form {
             Section("Permissions") {
                 PermissionRow(title: "Screen Recording", detail: "Required for screenshots and recordings.", granted: screenOK) {
-                    if !Permissions.requestScreenRecording() { Permissions.openSettings("Privacy_ScreenCapture") }
+                    Task { if !(await Permissions.ensureScreenRecording()) { Permissions.openSettings("Privacy_ScreenCapture") } }
                 }
                 PermissionRow(title: "Accessibility", detail: "Optional. Lets auto-zoom notice when you type (only timing is stored, never keys).",
                               granted: axOK) {
@@ -85,7 +85,7 @@ private struct GeneralPane: View {
         }
         .formStyle(.grouped)
         .onReceive(poll) { _ in
-            screenOK = Permissions.screenRecording
+            Task { screenOK = await Permissions.checkScreenRecording() }
             axOK = Permissions.accessibility
         }
     }

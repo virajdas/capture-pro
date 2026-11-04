@@ -28,7 +28,7 @@ final class RecordingController {
     /// `start == nil` records the whole display under the mouse without the picker.
     func start(start: SelectionStart?) async {
         guard phase == .idle else { return }
-        guard Permissions.requestScreenRecording() else {
+        guard await Permissions.ensureScreenRecording() else {
             Permissions.showScreenRecordingHelp()
             return
         }

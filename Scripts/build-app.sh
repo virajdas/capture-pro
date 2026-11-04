@@ -34,7 +34,10 @@ echo "→ Signing…"
 if [[ -n "${SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --entitlements Resources/CapturePro.entitlements -s "$SIGN_IDENTITY" "$APP"
 else
-  codesign --force -s - "$APP"
+  # Ad-hoc signature with an explicit designated requirement on the bundle identifier, so macOS
+  # privacy permissions (Screen Recording, Camera…) survive rebuilds and updates instead of being
+  # tied to one build's hash.
+  codesign --force -s - --requirements '=designated => identifier "io.github.virajdas.capturepro"' "$APP"
 fi
 
 mkdir -p dist

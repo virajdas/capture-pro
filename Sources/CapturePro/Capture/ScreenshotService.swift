@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 @MainActor
 enum ScreenshotService {
     static func capture(start: SelectionStart?) async {
-        guard Permissions.requestScreenRecording() else {
+        guard await Permissions.ensureScreenRecording() else {
             Permissions.showScreenRecordingHelp()
             return
         }

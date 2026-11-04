@@ -188,7 +188,7 @@ private struct PermissionsPage: View {
                      subtitle: "macOS asks you to allow these once. Everything stays on your Mac — Capture Pro never connects to the internet.") {
             VStack(spacing: 10) {
                 row("Screen Recording", "Required to take screenshots and recordings.", "rectangle.dashed.badge.record", screen, required: true) {
-                    if !Permissions.requestScreenRecording() { Permissions.openSettings("Privacy_ScreenCapture") }
+                    Task { if !(await Permissions.ensureScreenRecording()) { Permissions.openSettings("Privacy_ScreenCapture") } }
                 }
                 row("Microphone", "Optional — only used when you turn on the mic for a recording.", "mic", mic) {
                     Task { mic = await AVCaptureDevice.requestAccess(for: .audio) }
@@ -204,7 +204,7 @@ private struct PermissionsPage: View {
             }
         }
         .onReceive(poll) { _ in
-            screen = Permissions.screenRecording
+            Task { screen = await Permissions.checkScreenRecording() }
             mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             ax = Permissions.accessibility
         }
