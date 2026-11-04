@@ -58,7 +58,7 @@ Most screen tools are either bare (the system ones) or heavy (accounts, uploads,
 
 ## Install
 
-1. Download `CapturePro-x.y.z.zip` from [Releases](../../releases) and move **Capture Pro.app** to Applications.
+1. Download `CapturePro-x.y.z.dmg` from [Releases](../../releases), open it, and drag **Capture Pro** onto **Applications**.
 2. The app is open source and not notarized, so the first time, **right-click → Open** (or run `xattr -dr com.apple.quarantine "/Applications/Capture Pro.app"`).
 3. A short welcome tour walks you through permissions, shortcuts and picking a look. Grant **Screen Recording** when asked (System Settings › Privacy & Security › Screen & System Audio Recording). Optionally grant **Accessibility** so auto-zoom can react to typing — only keystroke *timing* is recorded, never which keys.
 
@@ -82,7 +82,7 @@ No Xcode project needed — just the Swift toolchain (Xcode or Command Line Tool
 ```bash
 git clone https://github.com/virajdas/capture-pro.git
 cd capture-pro
-Scripts/build-app.sh            # → build/Capture Pro.app and dist/CapturePro-1.0.0.zip
+Scripts/build-app.sh            # → build/Capture Pro.app, dist/CapturePro-1.1.0.dmg and .zip
 open "build/Capture Pro.app"
 ```
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds "Capture Pro.app" and a distributable zip in ./dist.
+# Builds "Capture Pro.app" plus a distributable .dmg and .zip in ./dist.
 #   VERSION=1.0.0 SIGN_IDENTITY="Developer ID Application: …" Scripts/build-app.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -44,5 +44,16 @@ mkdir -p dist
 ZIP="dist/CapturePro-$VERSION.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
+echo "→ Building disk image…"
+DMG="dist/CapturePro-$VERSION.dmg"
+STAGE="build/dmg"
+rm -rf "$STAGE" "$DMG"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -volname "Capture Pro" -srcfolder "$STAGE" -ov -fs HFS+ -format UDZO -imagekey zlib-level=9 "$DMG" >/dev/null
+rm -rf "$STAGE"
+
 echo "✓ $APP"
 echo "✓ $ZIP"
+echo "✓ $DMG"
