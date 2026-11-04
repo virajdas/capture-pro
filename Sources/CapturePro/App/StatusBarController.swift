@@ -96,25 +96,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(header("Record"))
         menu.addItem(entry("Record Area or Window…", "record.circle", keys[.record]) { Actions.recordArea() })
         menu.addItem(entry("Record Full Screen", "rectangle.inset.filled.badge.record", nil) { Actions.recordScreen() })
-        let sys = entry("System Audio", "speaker.wave.2", nil) { Preferences.shared.stored.systemAudio.toggle() }
-        sys.state = Preferences.shared.stored.systemAudio ? .on : .off
-        sys.indentationLevel = 1
-        menu.addItem(sys)
-        let mic = entry("Microphone", "mic", nil) { Preferences.shared.stored.microphone.toggle() }
-        mic.state = Preferences.shared.stored.microphone ? .on : .off
-        mic.indentationLevel = 1
-        menu.addItem(mic)
-        let cam = entry("Camera", "video", nil) { Preferences.shared.stored.camera.toggle() }
-        cam.state = Preferences.shared.stored.camera ? .on : .off
-        cam.indentationLevel = 1
-        menu.addItem(cam)
+        menu.addItem(ToggleMenuRow.item("System Audio", symbol: "speaker.wave.2", key: \.systemAudio))
+        menu.addItem(ToggleMenuRow.item("Microphone", symbol: "mic", key: \.microphone))
+        menu.addItem(ToggleMenuRow.item("Camera", symbol: "video", key: \.camera))
         menu.addItem(.separator())
-
-        let beautify = entry("Beautify Screenshots", "sparkles", nil) {
-            Preferences.shared.stored.beautifyScreenshots.toggle()
-        }
-        beautify.state = Preferences.shared.stored.beautifyScreenshots ? .on : .off
-        menu.addItem(beautify)
+        menu.addItem(ToggleMenuRow.item("Beautify Screenshots", symbol: "sparkles", key: \.beautifyScreenshots))
 
         let recent = NSMenuItem(title: "Recent Recordings", action: nil, keyEquivalent: "")
         recent.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
@@ -197,6 +183,70 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
         img.isTemplate = false
         return img
+    }
+}
+
+/// A menu row with a switch. Clicking it flips the setting in place — the menu stays open,
+/// so several options can be set in one go.
+final class ToggleMenuRow: NSView {
+    private let key: WritableKeyPath<Preferences.Stored, Bool>
+    private let toggle = NSSwitch()
+    private var hovering = false { didSet { needsDisplay = true } }
+
+    static func item(_ title: String, symbol: String, key: WritableKeyPath<Preferences.Stored, Bool>) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.view = ToggleMenuRow(title: title, symbol: symbol, key: key)
+        return item
+    }
+
+    init(title: String, symbol: String, key: WritableKeyPath<Preferences.Stored, Bool>) {
+        self.key = key
+        super.init(frame: NSRect(x: 0, y: 0, width: 270, height: 28))
+        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = .secondaryLabelColor
+        icon.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+        let label = NSTextField(labelWithString: title)
+        label.font = .menuFont(ofSize: 0)
+        toggle.controlSize = .mini
+        toggle.state = Preferences.shared.stored[keyPath: key] ? .on : .off
+        toggle.target = self
+        toggle.action = #selector(switched)
+        for v in [icon, label, toggle] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    // Clicking anywhere on the row flips the switch.
+    override func mouseUp(with event: NSEvent) {
+        toggle.state = toggle.state == .on ? .off : .on
+        switched()
+    }
+
+    @objc private func switched() {
+        Preferences.shared.stored[keyPath: key] = toggle.state == .on
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard hovering else { return }
+        NSColor.labelColor.withAlphaComponent(0.08).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 5, yRadius: 5).fill()
     }
 }
 
