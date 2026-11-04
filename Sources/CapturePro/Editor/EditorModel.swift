@@ -16,7 +16,7 @@ final class EditorModel {
     var trimStart: Double { didSet { project.edit.trimStart = trimStart; scheduleSave() } }
     var trimEnd: Double { didSet { project.edit.trimEnd = trimEnd; scheduleSave() } }
     var selectedSegment: UUID?
-    var camera: CameraStyle { didSet { project.edit.camera = camera; scheduleSave(); rebuild() } }
+    var camera: CameraStyle { didSet { project.edit.camera = camera; scheduleSave(); cameraChanged() } }
     var systemVolume: Double { didSet { project.edit.systemVolume = systemVolume; applyAudio() } }
     var microphoneVolume: Double { didSet { project.edit.microphoneVolume = microphoneVolume; applyAudio() } }
     private var audioTracks: [(CMPersistentTrackID, Bool)] = []
@@ -183,6 +183,29 @@ final class EditorModel {
             item.videoComposition = video.mutableCopy() as? AVVideoComposition
             if !self.isPlaying { self.seek(to: self.currentTime) }
         }
+    }
+
+    private var lastFrameRefresh = Date.distantPast
+    private var pendingRefresh: DispatchWorkItem?
+
+    /// Camera tweaks only swap the camera settings on the live renderer, then redraw the
+    /// paused frame at most ~30×/s — so dragging the camera follows the pointer.
+    private func cameraChanged() {
+        guard let compositor else { return }
+        compositor.state = compositor.state.replacing(camera: camera)
+        pendingRefresh?.cancel()
+        let refresh = DispatchWorkItem { [weak self] in self?.redrawFrame() }
+        pendingRefresh = refresh
+        let wait = max(0, 1.0 / 30 - Date().timeIntervalSince(lastFrameRefresh))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: refresh)
+    }
+
+    private func redrawFrame() {
+        lastFrameRefresh = Date()
+        // While playing, the next frames already use the new settings.
+        guard !isPlaying, let item = player.currentItem, let video else { return }
+        item.videoComposition = video.mutableCopy() as? AVVideoComposition
+        if !isPlaying { seek(to: currentTime) }
     }
 
     private func applyAudio() {

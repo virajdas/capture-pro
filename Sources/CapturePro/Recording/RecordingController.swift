@@ -54,7 +54,7 @@ final class RecordingController {
             camera = try? CameraRecorder(url: url.appendingPathComponent("camera.mov"), deviceID: prefs.cameraID)
             if let camera {
                 camera.startPreview()
-                bubble.show(session: camera.session)
+                if prefs.showCameraPreview { bubble.show(session: camera.session) }
             }
         }
         guard await Countdown.run(seconds: prefs.countdown, over: cocoaRect) else {

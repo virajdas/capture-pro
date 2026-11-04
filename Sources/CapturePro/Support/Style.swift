@@ -205,6 +205,10 @@ struct CameraStyle: Codable, Hashable {
     var shape: CameraShape = .circle
     /// Height as a fraction of the canvas height.
     var size: Double = 0.26
+    /// Width ÷ height for rounded and rectangle shapes (circles are always 1).
+    var aspect: Double = 1
+    /// Corner radius as a fraction of the shorter side (0 = square corners, 0.5 = pill).
+    var cornerRadius: Double = 0.18
     var corner: CameraCorner = .bottomRight
     /// Centre for `.custom`, normalized with a top-left origin.
     var x: Double = 0.84

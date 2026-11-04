@@ -7,7 +7,7 @@ final class RecordOptionsBar {
     private var panel: NSPanel?
 
     func show(on screen: NSScreen) {
-        let size = NSSize(width: 470, height: 52)
+        let size = NSSize(width: 600, height: 52)
         let frame = NSRect(x: screen.frame.midX - size.width / 2, y: screen.visibleFrame.minY + 36,
                            width: size.width, height: size.height)
         let p = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -41,11 +41,16 @@ private struct RecordOptionsView: View {
             chip("System Audio", on: "speaker.wave.2.fill", off: "speaker.slash", value: $prefs.stored.systemAudio)
             chip("Microphone", on: "mic.fill", off: "mic.slash", value: $prefs.stored.microphone)
             chip("Camera", on: "video.fill", off: "video.slash", value: $prefs.stored.camera)
+            if prefs.stored.camera {
+                chip("Preview", on: "eye.fill", off: "eye.slash", value: $prefs.stored.showCameraPreview)
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+            }
         }
         .padding(8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fixedSize()
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.colorScheme, .dark)
     }
 

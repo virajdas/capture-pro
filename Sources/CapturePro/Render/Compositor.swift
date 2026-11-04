@@ -32,6 +32,15 @@ final class RenderState {
         self.fallback = CursorArt.sprite(from: arrow.0, info: arrow.1, shadow: style.cursor.shadow)
     }
 
+    private init(copying o: RenderState, camera: CameraStyle) {
+        style = o.style; canvas = o.canvas; pointSize = o.pointSize; timeline = o.timeline
+        sprites = o.sprites; fallback = o.fallback; timeOffset = o.timeOffset; preview = o.preview
+        self.camera = camera
+    }
+
+    /// Same state with different camera settings — cheap, for live dragging in the editor.
+    func replacing(camera: CameraStyle) -> RenderState { RenderState(copying: self, camera: camera) }
+
     /// Output canvas for a source of `source` pixels at a given short side.
     static func canvasSize(source: CGSize, style: StyleSettings, shortSide: Double) -> CGSize {
         let srcAspect = source.width / max(source.height, 1)

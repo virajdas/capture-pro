@@ -162,6 +162,12 @@ private struct RecordingPane: View {
                 Text("Hides the real cursor while recording and draws a smoothed, enlarged one afterwards.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Camera") {
+                Toggle("Record camera", isOn: $prefs.stored.camera)
+                Toggle("Show camera preview while recording", isOn: $prefs.stored.showCameraPreview)
+                Text("The preview bubble is never part of the screen recording; you place the camera later in the editor.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Audio") {
                 Toggle("Record system audio", isOn: $prefs.stored.systemAudio)
                 Toggle("Record microphone", isOn: $prefs.stored.microphone)

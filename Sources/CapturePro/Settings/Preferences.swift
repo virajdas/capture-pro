@@ -102,6 +102,8 @@ final class Preferences {
         var microphoneID: String? = nil
         var camera = false
         var cameraID: String? = nil
+        /// Show the floating webcam bubble while recording (the camera records either way).
+        var showCameraPreview = true
         var hideSystemCursor = true
         var afterRecording: AfterRecording = .editor
         var exportFolder: String = Stored.defaultFolder(.moviesDirectory)

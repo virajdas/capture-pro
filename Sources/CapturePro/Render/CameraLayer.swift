@@ -11,11 +11,7 @@ enum CameraLayer {
         if cs.chromaKey { img = ChromaKey.apply(img, style: cs) }
 
         // Centre-crop to the shape's aspect.
-        let aspect: Double = switch cs.shape {
-        case .circle, .rounded: 1
-        case .rectangle: 4.0 / 3
-        case .cutout: e.width / e.height
-        }
+        let aspect = Self.aspect(cs, frame: e.size)
         var crop = e
         if e.width / e.height > aspect {
             crop.size.width = e.height * aspect
@@ -47,7 +43,7 @@ enum CameraLayer {
             return img.composited(over: out)
         }
 
-        let radius = cs.shape == .circle ? h / 2 : cs.shape == .rounded ? h * 0.2 : 10 * unit
+        let radius = Self.cornerRadius(cs, size: CGSize(width: w, height: h))
         let mask = Compositor.roundedRect(rect, radius: radius, color: .white)
         img = img.applyingFilter("CIBlendWithAlphaMask", parameters: [
             kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask,
@@ -72,6 +68,23 @@ enum CameraLayer {
             }
         }
         return out
+    }
+
+    static func aspect(_ cs: CameraStyle, frame: CGSize) -> Double {
+        switch cs.shape {
+        case .circle: 1
+        case .rounded, .rectangle: cs.aspect.clamped(0.3, 3.5)
+        case .cutout: frame.width / max(frame.height, 1)
+        }
+    }
+
+    static func cornerRadius(_ cs: CameraStyle, size: CGSize) -> Double {
+        let short = min(size.width, size.height)
+        switch cs.shape {
+        case .circle: return short / 2
+        case .rounded: return short * cs.cornerRadius.clamped(0, 0.5)
+        case .rectangle, .cutout: return 0
+        }
     }
 
     /// The camera's rectangle on the canvas (Core Image coordinates, bottom-left origin).
