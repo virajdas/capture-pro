@@ -22,7 +22,7 @@ jobs:
           [[ "$GITHUB_REF_TYPE" == "tag" ]] || VERSION="0.0.0-dev"
           VERSION="$VERSION" Scripts/build-app.sh
       - name: Render self-test
-        run: .build/release/CapturePro --render-demo "$RUNNER_TEMP/demo" || .build/*/release/CapturePro --render-demo "$RUNNER_TEMP/demo"
+        run: '"build/Capture Pro.app/Contents/MacOS/CapturePro" --render-demo "$RUNNER_TEMP/demo"'
       - uses: actions/upload-artifact@v4
         with:
           name: CapturePro
