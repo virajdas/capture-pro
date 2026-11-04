@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key><string>Capture Pro</string>
+	<key>CFBundleDisplayName</key><string>Capture Pro</string>
+	<key>CFBundleExecutable</key><string>CapturePro</string>
+	<key>CFBundleIdentifier</key><string>io.github.virajdas.capturepro</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>__VERSION__</string>
+	<key>CFBundleVersion</key><string>__BUILD__</string>
+	<key>LSMinimumSystemVersion</key><string>15.0</string>
+	<key>LSUIElement</key><true/>
+	<key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+	<key>NSMicrophoneUsageDescription</key><string>Capture Pro records your microphone only when you turn on microphone recording.</string>
+	<key>NSHumanReadableCopyright</key><string>MIT License</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key><string>Capture Pro Recording</string>
+			<key>CFBundleTypeRole</key><string>Editor</string>
+			<key>LSHandlerRank</key><string>Owner</string>
+			<key>LSTypeIsPackage</key><true/>
+			<key>LSItemContentTypes</key><array><string>io.github.virajdas.capturepro.project</string></array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key><string>io.github.virajdas.capturepro.project</string>
+			<key>UTTypeDescription</key><string>Capture Pro Recording</string>
+			<key>UTTypeConformsTo</key><array><string>com.apple.package</string></array>
+			<key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>capturepro</string></array></dict>
+		</dict>
+	</array>
+</dict>
+</plist>
