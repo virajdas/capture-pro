@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Observation
 
 /// The menu bar item: the whole app lives here.
@@ -147,15 +148,19 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let i = ClosureMenuItem(title: title, action: action)
         if let symbol { i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
         if let shortcut {
-            let attr = NSMutableAttributedString(string: title)
-            attr.append(NSAttributedString(string: "\t" + shortcut.display, attributes: [
-                .foregroundColor: NSColor.tertiaryLabelColor,
-                .font: NSFont.menuFont(ofSize: 0),
-            ]))
-            let style = NSMutableParagraphStyle()
-            style.tabStops = [NSTextTab(textAlignment: .right, location: 230)]
-            attr.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: attr.length))
-            i.attributedTitle = attr
+            // Shown in the menu's own shortcut column, which sizes itself to the content.
+            let name = Shortcut.keyName(shortcut.keyCode)
+            if name.count == 1 {
+                i.keyEquivalent = name.lowercased()
+                var mask: NSEvent.ModifierFlags = []
+                if shortcut.modifiers & UInt32(cmdKey) != 0 { mask.insert(.command) }
+                if shortcut.modifiers & UInt32(optionKey) != 0 { mask.insert(.option) }
+                if shortcut.modifiers & UInt32(shiftKey) != 0 { mask.insert(.shift) }
+                if shortcut.modifiers & UInt32(controlKey) != 0 { mask.insert(.control) }
+                i.keyEquivalentModifierMask = mask
+            } else {
+                i.toolTip = shortcut.display
+            }
         }
         return i
     }
@@ -201,7 +206,9 @@ final class ToggleMenuRow: NSView {
 
     init(title: String, symbol: String, key: WritableKeyPath<Preferences.Stored, Bool>) {
         self.key = key
-        super.init(frame: NSRect(x: 0, y: 0, width: 270, height: 28))
+        // Narrow by default; the menu stretches the row to its own width.
+        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 28))
+        autoresizingMask = [.width]
         let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .secondaryLabelColor
         icon.symbolConfiguration = .init(pointSize: 13, weight: .regular)
