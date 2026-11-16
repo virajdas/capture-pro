@@ -23,6 +23,7 @@ Most screen tools are either bare (the system ones) or heavy (accounts, uploads,
 **Capture**
 - Click the menu bar icon (or use a shortcut) to capture an area, a window or the whole screen
 - Area picker with live dimensions; `Space` switches to window picking, `Shift` constrains to a square, `Esc` cancels
+- **Scrolling capture**: pick an area or window, then scroll (or press Auto-scroll) and Capture Pro stitches one tall image — sticky headers and footers appear once, not on every screen
 - Copied to the clipboard by default, then opened in a calm **annotation editor**
 - Optionally also saved as PNG / JPEG / HEIC, or shown as a floating preview instead
 
@@ -71,6 +72,7 @@ Requires macOS 15 Sequoia or later.
 | Capture area | `⌥⇧1` |
 | Capture window | `⌥⇧2` |
 | Capture screen | `⌥⇧3` |
+| Capture scrolling area | `⌥⇧4` (press again to finish) |
 | Start / stop recording | `⌥⇧5` |
 
 All shortcuts can be changed in Settings › Shortcuts. You can also make a left-click on the menu bar icon capture or record immediately (Settings › General).
@@ -91,6 +93,7 @@ Useful while developing:
 ```bash
 swift build && .build/debug/CapturePro                         # run from the terminal
 .build/debug/CapturePro --render-demo /tmp/demo                # render a synthetic demo through the full pipeline
+.build/debug/CapturePro --stitch-test                          # verify scrolling-capture stitching pixel for pixel
 .build/debug/CapturePro --open "~/Movies/Capture Pro/Recording ….capturepro"   # open a project in the editor
 ```
 

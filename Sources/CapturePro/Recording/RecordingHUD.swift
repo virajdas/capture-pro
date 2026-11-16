@@ -65,7 +65,7 @@ private struct CountdownView: View {
 final class AreaFrame {
     private var panel: NSPanel?
 
-    func show(_ rect: NSRect) {
+    func show(_ rect: NSRect, color: Color = .red) {
         let r = rect.insetBy(dx: -4, dy: -4)
         let p = NSPanel(contentRect: r, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.level = .statusBar
@@ -78,7 +78,7 @@ final class AreaFrame {
         p.contentView = NSHostingView(rootView:
             RoundedRectangle(cornerRadius: 4)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                .foregroundStyle(Color.red.opacity(0.7)))
+                .foregroundStyle(color.opacity(0.75)))
         p.orderFrontRegardless()
         panel = p
     }

@@ -52,13 +52,14 @@ struct Shortcut: Codable, Hashable {
 }
 
 enum HotKeyAction: String, Codable, CaseIterable, Identifiable {
-    case captureArea, captureWindow, captureScreen, record
+    case captureArea, captureWindow, captureScreen, captureScrolling, record
     var id: String { rawValue }
     var label: String {
         switch self {
         case .captureArea: "Capture area"
         case .captureWindow: "Capture window"
         case .captureScreen: "Capture screen"
+        case .captureScrolling: "Capture scrolling area"
         case .record: "Start / stop recording"
         }
     }
@@ -72,7 +73,7 @@ final class Preferences {
     struct Stored: Codable {
         /// Bumped when defaults change; older saves get the new defaults for those settings.
         var schema = Stored.currentSchema
-        static let currentSchema = 2
+        static let currentSchema = 3
         // General
         var menuClick: MenuClickAction = .menu
         var playSounds = true
@@ -80,6 +81,7 @@ final class Preferences {
             .captureArea: Shortcut(keyCode: 18, modifiers: 0x0800 | 0x0200),   // ⌥⇧1
             .captureWindow: Shortcut(keyCode: 19, modifiers: 0x0800 | 0x0200), // ⌥⇧2
             .captureScreen: Shortcut(keyCode: 20, modifiers: 0x0800 | 0x0200), // ⌥⇧3
+            .captureScrolling: Shortcut(keyCode: 21, modifiers: 0x0800 | 0x0200), // ⌥⇧4
             .record: Shortcut(keyCode: 23, modifiers: 0x0800 | 0x0200),        // ⌥⇧5
         ]
         // Screenshots
@@ -131,6 +133,11 @@ final class Preferences {
                 ? [["saveScreenshots"], ["copyScreenshots"], ["showPreview"], ["style", "zoom"]]
                 : []
             var s = Resilient.decode(Stored.self, from: data, defaults: Stored(), dropping: reset) ?? Stored()
+            // Version 3 added scrolling capture; give it its default shortcut unless that key is taken.
+            if old < 3, s.shortcuts[.captureScrolling] == nil,
+               let k = Stored().shortcuts[.captureScrolling], !s.shortcuts.values.contains(k) {
+                s.shortcuts[.captureScrolling] = k
+            }
             s.schema = Stored.currentSchema
             stored = s
         } else {

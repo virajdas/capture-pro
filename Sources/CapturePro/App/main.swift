@@ -61,6 +61,9 @@ let args = CommandLine.arguments
 if let i = args.firstIndex(of: "--render-demo"), i + 1 < args.count {
     // Headless self-test: synthesizes a recording and renders it through the full pipeline.
     DemoRenderer.run(output: URL(fileURLWithPath: args[i + 1]))
+} else if args.contains("--stitch-test") {
+    // Headless check of scrolling-capture stitching against a known long document.
+    exit(StitchTest.run() ? 0 : 1)
 } else if let i = args.firstIndex(of: "--record-test"), i + 1 < args.count {
     // Headless check of the capture path: records the main display for 3 s, then exports it.
     DemoRenderer.recordTest(output: URL(fileURLWithPath: args[i + 1]))

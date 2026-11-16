@@ -93,6 +93,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(entry("Capture Area", "viewfinder", keys[.captureArea]) { Actions.captureArea() })
         menu.addItem(entry("Capture Window", "macwindow", keys[.captureWindow]) { Actions.captureWindow() })
         menu.addItem(entry("Capture Screen", "display", keys[.captureScreen]) { Actions.captureScreen() })
+        menu.addItem(entry("Capture Scrolling Area…", "arrow.up.and.down.text.horizontal", keys[.captureScrolling]) { Actions.captureScrolling() })
         menu.addItem(.separator())
         menu.addItem(header("Record"))
         menu.addItem(entry("Record Area or Window…", "record.circle", keys[.record]) { Actions.recordArea() })
@@ -277,6 +278,9 @@ enum Actions {
     static func captureArea() { Task { await ScreenshotService.capture(start: .area) } }
     static func captureWindow() { Task { await ScreenshotService.capture(start: .window) } }
     static func captureScreen() { Task { await ScreenshotService.capture(start: nil) } }
+    static func captureScrolling() {
+        if let session = ScrollCapture.current { session.finish() } else { Task { await ScrollCapture.start() } }
+    }
     static func recordArea() { Task { await RecordingController.shared.start(start: .area) } }
     static func recordScreen() { Task { await RecordingController.shared.start(start: nil) } }
 
@@ -294,6 +298,7 @@ enum Actions {
         if let k = s[.captureArea] { bindings.append((k, captureArea)) }
         if let k = s[.captureWindow] { bindings.append((k, captureWindow)) }
         if let k = s[.captureScreen] { bindings.append((k, captureScreen)) }
+        if let k = s[.captureScrolling] { bindings.append((k, captureScrolling)) }
         if let k = s[.record] { bindings.append((k, toggleRecording)) }
         HotKeys.shared.register(bindings)
     }
